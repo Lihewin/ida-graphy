@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.Python
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project specific - backup and test data
+backup/
+test_binaries/
+*-export/
+
+# IDA Pro files
+*.idb
+*.i64
+*.id0
+*.id1
+*.nam
+*.til
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+*.log
+
+# Export outputs
+test_output/
+test_file_export/
+exports/

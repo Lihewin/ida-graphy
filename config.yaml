@@ -1,0 +1,71 @@
+# IDA-Graphy Configuration File
+# =============================================================================
+
+# IDA Installation Settings
+ida:
+  # Path to IDA Pro installation directory
+  path: "C:\\Program Files\\IDA Professional 9.2"
+  
+  # Path to idalib Python bindings (usually under IDA installation)
+  idalib_python: "C:\\Program Files\\IDA Professional 9.2\\idalib\\python"
+
+# CSV Export Settings
+export:
+  # Output directory for CSV files
+  output_dir: "./csv_output"
+  
+  # Skip library functions (e.g., CRT functions) to reduce output size
+  skip_lib_functions: true
+  
+  # Validate exported data integrity (checks node IDs, edge references)
+  validate_data: true
+  
+  # Generate statistics report after export
+  generate_stats: true
+  
+  # Enable file export (decompiled code, structures, etc.)
+  # Requires Hex-Rays decompiler plugin
+  # Set to true to export human-readable files linked from graph nodes
+  enable_file_export: false
+
+# Analysis Options
+analysis:
+  # Enable dataflow analysis (READS/WRITES edges)
+  # Disabling this significantly speeds up processing
+  enable_dataflow: true
+  
+  # Analyze string references (REFERENCES edges)
+  enable_string_refs: true
+  
+  # Number of parallel workers for function analysis
+  # Set to 1 to disable parallel processing
+  parallel_workers: 4
+  
+  # Skip functions larger than this threshold (instruction count)
+  # Large functions may cause performance issues
+  max_function_size: 10000
+
+# Neo4j Integration Settings
+neo4j:
+  # Neo4j installation directory
+  # Used to generate import scripts
+  home: "/path/to/neo4j"
+  
+  # Target database name
+  database: "ida-graphy"
+  
+  # Neo4j server connection (optional, for direct import)
+  # uri: "bolt://localhost:7687"
+  # user: "neo4j"
+  # password: "password"
+
+# Logging Settings
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"
+  
+  # Save logs to file
+  file: "ida_graphy.log"
+  
+  # Log format
+  format: "[%(asctime)s] %(levelname)s - %(message)s"
