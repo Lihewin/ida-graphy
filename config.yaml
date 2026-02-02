@@ -45,6 +45,30 @@ analysis:
   # Large functions may cause performance issues
   max_function_size: 10000
 
+# Structure Canonicalization Settings
+struct_canonicalization:
+  # Enable structure name normalization for cross-binary consistency
+  enabled: true
+  
+  # Case normalization mode: 'lower', 'upper', or 'preserve'
+  case_mode: 'lower'
+  
+  # Aggressively remove numeric suffixes (e.g., Session_1 -> Session)
+  # Set to false to only remove single-digit IDA-style suffixes
+  aggressive_suffix_removal: true
+  
+  # Structure name aliases for cross-binary semantic mapping
+  # Maps variant names to canonical names
+  # Example: Different binaries may use different names for the same structure
+  aliases:
+    # Windows kernel examples
+    # ProcessObject: EPROCESS
+    # _EPROCESS: EPROCESS
+    # tagPROCESS: EPROCESS
+    
+    # Add your custom aliases below:
+    # VariantName: CanonicalName
+
 # Neo4j Integration Settings
 neo4j:
   # Neo4j installation directory

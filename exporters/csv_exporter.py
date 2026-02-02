@@ -10,7 +10,10 @@ CSV Exporter for Neo4j
 import os
 import csv
 import hashlib
+import logging
 from typing import Dict, List, Set, Any, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 class NodeIDGenerator:
@@ -259,7 +262,15 @@ class CSVExporter:
     
     def _export_dataslot_nodes(self, dataslots: List[Dict[str, Any]]) -> str:
         """
-        导出DataSlot节点
+        导出DataSlot节点（实现并集合并策略）
+        
+        根据 struct.txt 策略，当多个二进制文件定义相同的结构体成员时：
+        1. 使用规范化后的 struct_name + offset 生成的 uid 作为唯一标识
+        2. 对于相同 uid 的节点，应用并集合并策略：
+           - 名称：保留"最有意义"的名称（非 field_xxx 优先）
+           - 类型：保留最详细的类型
+           - 大小：取最大值（最完整的定义）
+        3. 在 CSV 导出阶段完成去重，而非在 Neo4j 导入阶段
         
         Args:
             dataslots: DataSlot节点列表，每个元素包含：
@@ -276,6 +287,67 @@ class CSVExporter:
         """
         filepath = os.path.join(self.output_dir, 'nodes', 'nodes_dataslot.csv')
         
+        # 实现并集合并策略
+        merged_slots: Dict[str, Dict[str, Any]] = {}
+        
+        for slot in dataslots:
+            uid = slot['uid']
+            
+            if uid not in merged_slots:
+                # 首次遇到该 uid，直接添加
+                merged_slots[uid] = slot.copy()
+            else:
+                # 已存在相同 uid，执行合并策略
+                existing = merged_slots[uid]
+                
+                # 策略1：名称优先级 - 有意义的名称 > field_xxx > 空
+                existing_name = existing.get('name', '')
+                new_name = slot.get('name', '')
+                
+                # 判断名称是否"有意义"（不是自动生成的 field_xxx）
+                def is_meaningful_name(name: str) -> bool:
+                    if not name:
+                        return False
+                    # field_xxx 或 sub_xxx 格式视为无意义
+                    if name.startswith('field_') or name.startswith('sub_'):
+                        return False
+                    return True
+                
+                existing_meaningful = is_meaningful_name(existing_name)
+                new_meaningful = is_meaningful_name(new_name)
+                
+                if new_meaningful and not existing_meaningful:
+                    # 新名称有意义，旧名称无意义 -> 使用新名称
+                    existing['name'] = new_name
+                elif new_meaningful and existing_meaningful:
+                    # 都有意义，保留更长的（通常更详细）
+                    if len(new_name) > len(existing_name):
+                        existing['name'] = new_name
+                
+                # 策略2：大小取最大值（最完整的定义）
+                existing_size = existing.get('size', 0)
+                new_size = slot.get('size', 0)
+                if new_size > existing_size:
+                    existing['size'] = new_size
+                
+                # 策略3：类型信息 - 保留非空、更详细的类型名
+                existing_type = existing.get('base_type', '')
+                new_type = slot.get('base_type', '')
+                if new_type and len(new_type) > len(existing_type):
+                    existing['base_type'] = new_type
+                
+                # struct_file: 保留非空值
+                if slot.get('struct_file') and not existing.get('struct_file'):
+                    existing['struct_file'] = slot['struct_file']
+        
+        # 统计合并效果
+        original_count = len(dataslots)
+        merged_count = len(merged_slots)
+        if merged_count < original_count:
+            logger.info(f"DataSlot merge: {original_count} -> {merged_count} "
+                       f"(deduplicated {original_count - merged_count} entries)")
+        
+        # 写入 CSV
         with open(filepath, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f, escapechar='\\', quoting=csv.QUOTE_MINIMAL)
             
@@ -291,9 +363,9 @@ class CSVExporter:
                 ':LABEL'
             ])
             
-            for slot in dataslots:
+            for uid, slot in merged_slots.items():
                 writer.writerow([
-                    slot['uid'],
+                    uid,
                     self._escape_csv_value(slot.get('base_type', '')),
                     slot.get('offset', 0),
                     slot.get('size', 0),
@@ -304,7 +376,7 @@ class CSVExporter:
                 ])
                 
                 # 记录ID
-                self.dataslot_ids.add(slot['uid'])
+                self.dataslot_ids.add(uid)
                 self.stats['nodes']['DataSlot'] += 1
         
         return filepath

@@ -23,6 +23,7 @@ import ida_typeinf
 
 # 内部导入
 from .node_id_generator import NodeIDGenerator
+from .struct_normalizer import StructNameNormalizer
 from .models import (
     GraphData, BinaryNode, FunctionNode, DataSlotNode, StringNode,
     ContainsEdge, CallsEdge, ReferencesEdge, LinksToEdge, WritesEdge, ReadsEdge
@@ -41,17 +42,19 @@ class GraphExtractor:
     这是不包含数据流分析的基础版本（WRITES/READS边将由数据流分析模块完成）。
     """
     
-    def __init__(self, binary_content: bytes, binary_path: str):
+    def __init__(self, binary_content: bytes, binary_path: str, struct_normalizer: StructNameNormalizer = None):
         """
         初始化提取器
         
         Args:
             binary_content: 二进制文件的完整内容
             binary_path: 二进制文件路径
+            struct_normalizer: 结构体名称规范化器（可选）
         """
         self.binary_path = binary_path
         self.binary_name = os.path.basename(binary_path)
         self.id_gen = NodeIDGenerator(binary_content=binary_content)
+        self.struct_normalizer = struct_normalizer or StructNameNormalizer()
         self.graph_data = GraphData()
         self.graph_data.binary_name = self.binary_name  # For symbol resolution
         
@@ -375,13 +378,16 @@ class GraphExtractor:
                             if not member_name:
                                 member_name = f"field_{member_offset:X}"
                             
+                            # 规范化结构体名称（实现跨二进制一致性）
+                            normalized_struct_name = self.struct_normalizer.normalize(struct_name)
+                            
                             # 生成DataSlot节点（结构体成员）
-                            # 使用结构体名+偏移量生成跨二进制一致的ID
-                            dataslot_uid = self.id_gen.get_struct_slot_id(struct_name, member_offset)
+                            # 使用规范化后的结构体名+偏移量生成跨二进制一致的ID
+                            dataslot_uid = self.id_gen.get_struct_slot_id(normalized_struct_name, member_offset)
                             
                             dataslot_node = DataSlotNode(
                                 uid=dataslot_uid,
-                                base_type=struct_name,
+                                base_type=normalized_struct_name,  # 使用规范化后的名称
                                 offset=member_offset,
                                 size=member_size,
                                 name=member_name,

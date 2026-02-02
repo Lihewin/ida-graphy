@@ -63,6 +63,12 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
         'neo4j': {
             'home': '/path/to/neo4j',
             'database': 'ida-graphy'
+        },
+        'struct_canonicalization': {
+            'enabled': True,
+            'case_mode': 'lower',
+            'aggressive_suffix_removal': True,
+            'aliases': {}
         }
     }
     
@@ -201,7 +207,21 @@ def process_binary(binary_path: str, config: Dict[str, Any], all_nodes: Dict, al
             binary_content = f.read()
         
         from core.graph_extractor import GraphExtractor
-        extractor = GraphExtractor(binary_content, binary_path)
+        from core.struct_normalizer import StructNameNormalizer
+        
+        # 创建并配置结构体规范化器
+        struct_normalizer = None
+        if config.get('struct_canonicalization', {}).get('enabled', True):
+            canon_config = config['struct_canonicalization']
+            struct_normalizer = StructNameNormalizer(
+                aliases=canon_config.get('aliases', {}),
+                case_mode=canon_config.get('case_mode', 'lower'),
+                aggressive_suffix_removal=canon_config.get('aggressive_suffix_removal', True)
+            )
+            if struct_normalizer.aliases:
+                logger.info(f"Loaded {len(struct_normalizer.aliases)} struct aliases")
+        
+        extractor = GraphExtractor(binary_content, binary_path, struct_normalizer)
         
         # 设置配置选项
         extractor.enable_dataflow = config['analysis'].get('enable_dataflow', True)
@@ -622,6 +642,7 @@ def main():
     logger.info(f"  Dataflow Analysis: {config['analysis']['enable_dataflow']}")
     logger.info(f"  Skip Library Functions: {config['export']['skip_lib_functions']}")
     logger.info(f"  Export Files: {config['export'].get('enable_file_export', False)}")
+    logger.info(f"  Struct Canonicalization: {config.get('struct_canonicalization', {}).get('enabled', True)}")
     
     # 设置IDA路径
     if not setup_ida_paths(config):
