@@ -52,6 +52,5 @@ htmlcov/
 *.log
 
 # Export outputs
-test_output/
-test_file_export/
+test*/
 exports/

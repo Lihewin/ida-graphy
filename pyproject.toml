@@ -23,6 +23,7 @@ dev = [
 
 [tool.setuptools]
 packages = ["core", "analyzers", "exporters", "tests"]
+py-modules = ["ida_graphy"]
 
 [build-system]
 requires = ["setuptools>=61.0"]

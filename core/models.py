@@ -20,7 +20,10 @@ Edge Types:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Dict
+from datetime import datetime
+import json
+import os
 
 
 # ============================================================================
@@ -415,3 +418,166 @@ class GraphData:
         """返回总边数"""
         return (len(self.contains) + len(self.calls) + len(self.links_to) + 
                 len(self.references) + len(self.writes) + len(self.reads))
+    
+    def merge(self, other: 'GraphData') -> None:
+        """合并另一个GraphData对象到当前对象中
+        
+        Args:
+            other: 要合并的GraphData对象
+        """
+        # 合并节点（避免重复）
+        existing_binary_hashes = {b.hash for b in self.binaries}
+        existing_function_uids = {f.uid for f in self.functions}
+        existing_dataslot_uids = {d.uid for d in self.dataslots}
+        existing_string_hashes = {s.hash for s in self.strings}
+        
+        # 添加新的节点
+        for binary in other.binaries:
+            if binary.hash not in existing_binary_hashes:
+                self.binaries.append(binary)
+                
+        for function in other.functions:
+            if function.uid not in existing_function_uids:
+                self.functions.append(function)
+                
+        for dataslot in other.dataslots:
+            if dataslot.uid not in existing_dataslot_uids:
+                self.dataslots.append(dataslot)
+                
+        for string in other.strings:
+            if string.hash not in existing_string_hashes:
+                self.strings.append(string)
+        
+        # 合并边（避免重复）
+        existing_contains = {(c.from_id, c.to_id) for c in self.contains}
+        existing_calls = {(c.from_id, c.to_id, c.call_type) for c in self.calls}
+        existing_links_to = {(l.from_id, l.to_id, l.link_type) for l in self.links_to}
+        existing_references = {(r.from_id, r.to_id) for r in self.references}
+        existing_writes = {(w.from_id, w.to_id) for w in self.writes}
+        existing_reads = {(r.from_id, r.to_id) for r in self.reads}
+        
+        for edge in other.contains:
+            if (edge.from_id, edge.to_id) not in existing_contains:
+                self.contains.append(edge)
+                
+        for edge in other.calls:
+            key = (edge.from_id, edge.to_id, edge.call_type)
+            if key not in existing_calls:
+                self.calls.append(edge)
+            else:
+                # 如果已存在相同的调用，则累加计数
+                for existing_call in self.calls:
+                    if (existing_call.from_id == edge.from_id and 
+                        existing_call.to_id == edge.to_id and 
+                        existing_call.call_type == edge.call_type):
+                        existing_call.count += edge.count
+                        break
+                
+        for edge in other.links_to:
+            key = (edge.from_id, edge.to_id, edge.link_type)
+            if key not in existing_links_to:
+                self.links_to.append(edge)
+                
+        for edge in other.references:
+            if (edge.from_id, edge.to_id) not in existing_references:
+                self.references.append(edge)
+                
+        for edge in other.writes:
+            if (edge.from_id, edge.to_id) not in existing_writes:
+                self.writes.append(edge)
+                
+        for edge in other.reads:
+            if (edge.from_id, edge.to_id) not in existing_reads:
+                self.reads.append(edge)
+
+
+# ============================================================================
+# Project Management Models
+# ============================================================================
+
+@dataclass
+class BinaryFile:
+    """项目中的二进制文件信息"""
+    path: str                    # 文件绝对路径
+    name: str                   # 文件名（用于显示）
+    hash: str                   # 文件内容SHA256哈希
+    added_time: str             # 添加到项目的时间 (ISO format)
+    last_analyzed: Optional[str] = None  # 最后分析时间 (ISO format)
+    last_modified: Optional[str] = None  # 文件最后修改时间 (ISO format)
+    size: int = 0               # 文件大小（字节）
+    
+    def to_dict(self) -> dict:
+        """转换为字典用于JSON序列化"""
+        return {
+            'path': self.path,
+            'name': self.name,
+            'hash': self.hash,
+            'added_time': self.added_time,
+            'last_analyzed': self.last_analyzed,
+            'last_modified': self.last_modified,
+            'size': self.size
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> 'BinaryFile':
+        """从字典创建BinaryFile对象"""
+        return cls(
+            path=data['path'],
+            name=data['name'],
+            hash=data['hash'],
+            added_time=data['added_time'],
+            last_analyzed=data.get('last_analyzed'),
+            last_modified=data.get('last_modified'),
+            size=data.get('size', 0)
+        )
+
+
+@dataclass
+class ProjectMetadata:
+    """项目元数据"""
+    name: str                           # 项目名称
+    description: str                    # 项目描述
+    created_time: str                   # 创建时间 (ISO format)
+    modified_time: str                  # 最后修改时间 (ISO format)
+    database_name: str                  # 对应的Neo4j数据库名
+    binaries: List[BinaryFile] = field(default_factory=list)  # 包含的二进制文件
+    config_overrides: Dict[str, any] = field(default_factory=dict)  # 项目级配置覆盖
+    
+    def to_dict(self) -> dict:
+        """转换为字典用于JSON序列化"""
+        return {
+            'name': self.name,
+            'description': self.description,
+            'created_time': self.created_time,
+            'modified_time': self.modified_time,
+            'database_name': self.database_name,
+            'binaries': [binary.to_dict() for binary in self.binaries],
+            'config_overrides': self.config_overrides
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> 'ProjectMetadata':
+        """从字典创建ProjectMetadata对象"""
+        binaries = [BinaryFile.from_dict(b) for b in data.get('binaries', [])]
+        return cls(
+            name=data['name'],
+            description=data['description'],
+            created_time=data['created_time'],
+            modified_time=data['modified_time'],
+            database_name=data['database_name'],
+            binaries=binaries,
+            config_overrides=data.get('config_overrides', {})
+        )
+    
+    def save_to_file(self, file_path: str) -> None:
+        """保存项目元数据到JSON文件"""
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(self.to_dict(), f, indent=4, ensure_ascii=False)
+    
+    @classmethod
+    def load_from_file(cls, file_path: str) -> 'ProjectMetadata':
+        """从JSON文件加载项目元数据"""
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return cls.from_dict(data)
