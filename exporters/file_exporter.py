@@ -71,6 +71,7 @@ class FileExporter:
         
         # Initialize Hex-Rays if available
         self.hexrays_available = False
+        self._ensure_ida_imports()
         if IDA_AVAILABLE:
             try:
                 if ida_hexrays.init_hexrays_plugin():
@@ -80,6 +81,41 @@ class FileExporter:
                     logger.warning("Hex-Rays plugin failed to initialize")
             except Exception as e:
                 logger.warning(f"Hex-Rays not available: {e}")
+
+    def _ensure_ida_imports(self) -> None:
+        """Attempt to import IDA APIs after idalib is loaded."""
+        global IDA_AVAILABLE
+        if IDA_AVAILABLE:
+            return
+
+        try:
+            global ida_hexrays
+            global ida_funcs
+            global ida_nalt
+            global ida_typeinf
+            global ida_entry
+            global idautils
+            global idc
+
+            import ida_hexrays as _ida_hexrays
+            import ida_funcs as _ida_funcs
+            import ida_nalt as _ida_nalt
+            import ida_typeinf as _ida_typeinf
+            import ida_entry as _ida_entry
+            import idautils as _idautils
+            import idc as _idc
+
+            ida_hexrays = _ida_hexrays
+            ida_funcs = _ida_funcs
+            ida_nalt = _ida_nalt
+            ida_typeinf = _ida_typeinf
+            ida_entry = _ida_entry
+            idautils = _idautils
+            idc = _idc
+
+            IDA_AVAILABLE = True
+        except ImportError:
+            IDA_AVAILABLE = False
     
     def export_all(self) -> Dict[str, Any]:
         """

@@ -40,10 +40,10 @@ from typing import List, Dict, Any, Optional, Tuple
 import time
 
 # Import project management modules
-from core.project_manager import ProjectManager, ProjectError, Project
+from core.project.manager import ProjectManager, ProjectError, Project
 from core.file_watcher import FileWatcher, ProjectFileMonitor, create_project_monitor
-from database.neo4j_manager import Neo4jManager, Neo4jError
-from exporters.project_exporter import ProjectExporter, ProjectExportError, create_project_exporter
+from exporters.export_manager import ExportManager
+from exporters.neo4j_exporter import create_neo4j_exporter
 
 # Global logger
 logger = logging.getLogger('ida-graphy')
@@ -187,7 +187,9 @@ def analyze_project_binaries(project, config: Dict[str, Any]):
         GraphData对象，如果分析失败则返回None
     """
     from core.models import GraphData
-    from core.graph_extractor import GraphExtractor
+    from core.mapping.symbol_resolver import resolve_symbols
+    from core.mapping.symbol_resolver import resolve_symbols
+    from exporters.export_manager import ExportManager
     import tempfile
     import shutil
     import os
@@ -214,6 +216,9 @@ def analyze_project_binaries(project, config: Dict[str, Any]):
         logger.error(f"无法导入IDA库: {e}")
         return None
     
+    exporter = ExportManager(config, project)
+    enable_file_export = config.get("export", {}).get("enable_file_export", False)
+
     for i, binary in enumerate(project.binaries, 1):
         logger.info(f"[{i}/{len(project.binaries)}] 分析文件: {binary.name}")
         
@@ -236,15 +241,28 @@ def analyze_project_binaries(project, config: Dict[str, Any]):
                 logger.info("等待IDA自动分析完成...")
                 ida_auto.auto_wait()
                 
-                # 创建图提取器
-                extractor = GraphExtractor(binary_content, binary.path)
+                # 执行提取与映射
+                logger.info("提取原始数据...")
+                from core.extraction.engine import ExtractionEngine
+                from core.mapping.graph_mapper import GraphMapper
+
+                enable_dataflow = config.get('analysis', {}).get('enable_dataflow', True)
+                engine = ExtractionEngine(binary.path, enable_dataflow=enable_dataflow)
+                raw_data = engine.extract()
                 
-                # 执行分析
-                logger.info("提取图数据...")
-                graph_data = extractor.extract_all()
+                logger.info("映射为图数据...")
+                mapper = GraphMapper(binary_content=binary_content)
+                graph_data = mapper.map(raw_data)
+
+                if config.get("export", {}).get("enable_file_export", False):
+                    exporter = ExportManager(config, project)
+                    exporter.export_files(binary.path, graph_data)
                 
                 # 合并到总图数据中
                 merged_graph.merge(graph_data)
+
+                if enable_file_export:
+                    exporter.export_files(binary.path, graph_data)
                 
                 logger.info(f"完成分析: {binary.name} - 节点:{graph_data.node_count()}, 边:{graph_data.edge_count()}")
                 
@@ -264,6 +282,18 @@ def analyze_project_binaries(project, config: Dict[str, Any]):
             continue
     
     if merged_graph.node_count() > 0:
+        binary_names = {b.hash: b.name for b in merged_graph.binaries}
+        merged_graph.links_to = resolve_symbols(
+            merged_graph.functions,
+            merged_graph.links_to,
+            binary_names,
+        )
+        binary_names = {b.hash: b.name for b in merged_graph.binaries}
+        merged_graph.links_to = resolve_symbols(
+            merged_graph.functions,
+            merged_graph.links_to,
+            binary_names,
+        )
         logger.info(f"✅ 项目分析完成 - 总节点: {merged_graph.node_count()}, 总边: {merged_graph.edge_count()}")
         return merged_graph
     else:
@@ -310,7 +340,7 @@ def cmd_project_create(args, config: Dict) -> int:
         # 如果配置了Neo4j，创建数据库
         if config['neo4j']['projects']['auto_create_database']:
             try:
-                exporter = create_project_exporter(config)
+                exporter = create_neo4j_exporter(config)
                 if exporter.neo4j_manager:
                     exporter.neo4j_manager.create_database(metadata.database_name)
                     print(f"✅ Neo4j数据库 '{metadata.database_name}' 创建成功")
@@ -350,7 +380,7 @@ def cmd_project_delete(args, config: Dict) -> int:
         # 删除Neo4j数据库
         if database_name and config['neo4j']['projects']['drop_database_on_delete']:
             try:
-                exporter = create_project_exporter(config)
+                exporter = create_neo4j_exporter(config)
                 if exporter.neo4j_manager:
                     exporter.neo4j_manager.drop_database(database_name, if_exists=True)
                     print(f"✅ Neo4j数据库 '{database_name}' 删除成功")
@@ -424,7 +454,7 @@ def cmd_project_info(args, config: Dict) -> int:
         
         # 检查数据库状态
         try:
-            exporter = create_project_exporter(config)
+            exporter = create_neo4j_exporter(config)
             if exporter.neo4j_manager:
                 stats = exporter.get_database_stats(project)
                 if stats:
@@ -525,22 +555,22 @@ def cmd_project_sync(args, config: Dict) -> int:
             logger.error("分析失败，无法生成图数据")
             return 1
         
-        # 导出到Neo4j
+        # 导出到Neo4j或CSV
         try:
-            exporter = create_project_exporter(config)
-            if exporter.neo4j_manager:
+            neo4j_exporter = create_neo4j_exporter(config)
+            if neo4j_exporter.neo4j_manager:
                 changed_hashes = [binary.hash for binary in changed_files] if changed_files else None
-                stats = exporter.sync_project_to_neo4j(project, graph_data, changed_hashes)
-                
-                print(f"✅ 同步完成:")
+                stats = neo4j_exporter.sync_project_to_neo4j(project, graph_data, changed_hashes)
+
+                print("✅ 同步完成:")
                 print(f"   创建节点: {stats.get('nodes_created', 0)}")
                 print(f"   创建关系: {stats.get('relationships_created', 0)}")
                 print(f"   删除节点: {stats.get('nodes_deleted', 0)}")
             else:
-                # 导出到CSV
-                exporter.export_to_csv(project, graph_data)
+                exporter = ExportManager(config, project)
+                exporter.export_to_csv(graph_data)
                 print("✅ 数据已导出到CSV文件")
-        
+
         except Exception as e:
             logger.error(f"同步失败: {e}")
             return 1
@@ -603,7 +633,7 @@ def cmd_project_status(args, config: Dict) -> int:
         
         # 显示数据库统计
         try:
-            exporter = create_project_exporter(config)
+            exporter = create_neo4j_exporter(config)
             if exporter.neo4j_manager:
                 stats = exporter.get_database_stats(project)
                 if stats:
@@ -627,12 +657,12 @@ def cmd_project_status(args, config: Dict) -> int:
 def cmd_neo4j_test(args, config: Dict) -> int:
     """测试Neo4j连接"""
     try:
-        exporter = create_project_exporter(config)
+        exporter = create_neo4j_exporter(config)
         if not exporter.neo4j_manager:
             logger.error("Neo4j未配置")
             return 1
         
-        info = exporter.test_neo4j_connection()
+        info = exporter.test_connection()
         
         if info.get('connected'):
             print("✅ Neo4j连接成功")
@@ -654,7 +684,7 @@ def cmd_neo4j_test(args, config: Dict) -> int:
 def cmd_neo4j_databases(args, config: Dict) -> int:
     """列出Neo4j数据库"""
     try:
-        exporter = create_project_exporter(config)
+        exporter = create_neo4j_exporter(config)
         if not exporter.neo4j_manager:
             logger.error("Neo4j未配置")
             return 1

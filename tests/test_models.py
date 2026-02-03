@@ -22,7 +22,7 @@ from core.models import (
     ReadsEdge,
     validate_node_id
 )
-from core.node_id_generator import NodeIDGenerator
+from core.mapping.id_generator import NodeIDGenerator
 
 
 class TestNodeModels(unittest.TestCase):
@@ -268,8 +268,8 @@ class TestEdgeModels(unittest.TestCase):
         
         data = edge.to_dict()
         
-        self.assertEqual(data['from'], "from_test")
-        self.assertEqual(data['to'], "to_test")
+        self.assertEqual(data['from_id'], "from_test")
+        self.assertEqual(data['to_id'], "to_test")
     
     def test_calls_edge_creation(self):
         """Test CallsEdge instantiation."""
@@ -312,8 +312,8 @@ class TestEdgeModels(unittest.TestCase):
         
         data = edge.to_dict()
         
-        self.assertEqual(data['from'], "func1")
-        self.assertEqual(data['to'], "func2")
+        self.assertEqual(data['from_id'], "func1")
+        self.assertEqual(data['to_id'], "func2")
         self.assertEqual(data['type'], 'INDIRECT')
         self.assertEqual(data['count'], 3)
     
@@ -388,8 +388,8 @@ class TestEdgeModels(unittest.TestCase):
         
         data = edge.to_dict()
         
-        self.assertEqual(data['from'], "func1")
-        self.assertEqual(data['to'], "slot1")
+        self.assertEqual(data['from_id'], "func1")
+        self.assertEqual(data['to_id'], "slot1")
         self.assertEqual(data['op_type'], 'OR')
         self.assertEqual(data['const_val'], '0xFF')
         self.assertEqual(data['loc'], 0x2000)
@@ -416,7 +416,8 @@ class TestEdgeModels(unittest.TestCase):
             to_id=slot_id,
             condition=True,
             op_type='CMP',
-            const_val='3'
+            const_val='3',
+            loc=0x1010
         )
         
         self.assertTrue(edge.condition)
@@ -432,7 +433,8 @@ class TestEdgeModels(unittest.TestCase):
         edge_conditional = ReadsEdge(
             from_id=func_id,
             to_id=slot_id,
-            condition=True
+            condition=True,
+            loc=0x1010
         )
         self.assertTrue(edge_conditional.condition)
         
@@ -440,7 +442,8 @@ class TestEdgeModels(unittest.TestCase):
         edge_non_conditional = ReadsEdge(
             from_id=func_id,
             to_id=slot_id,
-            condition=False
+            condition=False,
+            loc=0x1010
         )
         self.assertFalse(edge_non_conditional.condition)
     
@@ -451,13 +454,14 @@ class TestEdgeModels(unittest.TestCase):
             to_id="slot1",
             condition=True,
             op_type='TEST',
-            const_val='0'
+            const_val='0',
+            loc=0x1000
         )
         
         data = edge.to_dict()
         
-        self.assertEqual(data['from'], "func1")
-        self.assertEqual(data['to'], "slot1")
+        self.assertEqual(data['from_id'], "func1")
+        self.assertEqual(data['to_id'], "slot1")
         self.assertTrue(data['condition'])
         self.assertEqual(data['op_type'], 'TEST')
         self.assertEqual(data['const_val'], '0')

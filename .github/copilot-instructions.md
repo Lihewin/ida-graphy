@@ -2,14 +2,121 @@
 
 ## 项目概述
 
-IDA-Graphy 是一个复杂的二进制分析框架，使用 IDA Pro 从可执行文件创建图数据库。这是一个**双层项目**：
+IDA-Graphy 是一个模块化的二进制分析框架，使用 IDA Pro 从可执行文件创建图数据库。这是一个**双层项目**：
 
 1. **表层**："IDA Export" - 简单的反编译文件导出，供 AI IDE 使用
 2. **核心层**："IDA-Graphy" - 基于项目的高级二进制分析，集成 Neo4j 图数据库
 
-## 架构与核心组件
+## 模块化架构
 
-### 核心数据模型（`core/models.py`）
+项目采用四层模块化设计，数据流向清晰：
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        ida_graphy.py (CLI)                       │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │
+┌─────────────────────────────▼───────────────────────────────────┐
+│               1. ProjectManager (项目管理器)                      │
+│   core/project/                                                  │
+│   - 工作目录/项目生命周期管理                                      │
+│   - Neo4j 数据库连接协调                                          │
+│   - files_manifest.json 维护                                     │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │
+┌─────────────────────────────▼───────────────────────────────────┐
+│            2. ExtractionEngine (IDALib 提取引擎)                  │
+│   core/extraction/                                               │
+│   - 从 idalib 提取原始数据 (RawBinaryData DTO)                    │
+│   - DataFlow 分析集成 (Hex-Rays 可用时自动启用)                    │
+│   - 返回原始 DTO 而非图模型                                        │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │
+┌─────────────────────────────▼───────────────────────────────────┐
+│               3. GraphMapper (图映射器)                           │
+│   core/mapping/                                                  │
+│   - 原始数据 → 图模型 (节点/边)                                    │
+│   - ID 生成 (NodeIDGenerator)                                    │
+│   - 结构体规范化 (StructNameNormalizer)                           │
+│   - 跨二进制符号解析 (SymbolResolver)                              │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │
+┌─────────────────────────────▼───────────────────────────────────┐
+│              4. ExportManager (导出管理器)                        │
+│   exporters/                                                     │
+│   - Neo4j 数据库导出                                              │
+│   - CSV 兼容导出                                                  │
+│   - 文件导出 (伪C、结构体、导入导出表、字符串表)                     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 模块职责边界
+
+| 模块 | 输入 | 输出 | 职责 |
+|------|------|------|------|
+| **ProjectManager** | CLI 命令 | 协调其他模块 | 项目 CRUD、文件变更追踪、sync 流程编排 |
+| **ExtractionEngine** | 二进制文件路径 | `RawBinaryData` DTO | IDA API 调用、原始数据收集、DataFlow 分析 |
+| **GraphMapper** | `RawBinaryData` | `GraphData` | ID 生成、模型构建、结构体规范化 |
+| **ExportManager** | `GraphData` | Neo4j/CSV/文件 | 数据持久化、文件生成 |
+
+### 关键设计原则
+
+1. **严格分层**：提取引擎只返回原始数据（地址、名称），不生成 ID；图映射器负责所有 ID 计算
+2. **sync 自动导出**：每次项目同步时自动生成所有文件（伪C、结构体、导入导出表、字符串表）
+3. **独立数据库**：每个项目维护独立 Neo4j 数据库（`idg-project-{name}`）
+4. **DataFlow 集成**：Hex-Rays 可用时自动启用 ctree 分析，提取 READS/WRITES 边
+
+## 目录结构
+
+```
+core/
+├── project/                    # 项目管理模块
+│   ├── __init__.py
+│   ├── manager.py              # ProjectManager 主类
+│   ├── metadata.py             # ProjectMetadata, BinaryFile
+│   └── file_tracker.py         # 文件变更追踪
+├── extraction/                 # 提取引擎模块
+│   ├── __init__.py
+│   ├── engine.py               # ExtractionEngine 主入口
+│   ├── raw_data.py             # RawBinaryData 等 DTO 定义
+│   ├── ida_adapter.py          # idalib API 封装
+│   └── dataflow.py             # DataFlow 分析
+├── mapping/                    # 图映射器模块
+│   ├── __init__.py
+│   ├── graph_mapper.py         # GraphMapper 主类
+│   ├── id_generator.py         # NodeIDGenerator
+│   ├── struct_normalizer.py    # 结构体名称规范化
+│   └── symbol_resolver.py      # 跨二进制符号解析
+└── models.py                   # 图模型定义 (节点/边)
+
+exporters/
+├── __init__.py
+├── export_manager.py           # ExportManager 统一接口
+├── neo4j_exporter.py           # Neo4j 导出
+├── csv_exporter.py             # CSV 导出
+└── file_exporter.py            # 文件导出 (伪C/结构体/表)
+
+database/
+├── __init__.py
+└── neo4j_manager.py            # Neo4j 连接管理
+```
+
+## 原始数据 DTO
+
+提取引擎返回的原始数据结构位于 `core/extraction/raw_data.py`，**只包含地址和原始名称，不包含计算后的 ID**：
+
+| DTO | 说明 |
+|-----|------|
+| `RawBinaryInfo` | 二进制元信息 (name, base_addr, arch, compile_ts) |
+| `RawFunction` | 函数原始数据 (ea, name, size, flags, signature) |
+| `RawString` | 字符串原始数据 (ea, content, encoding) |
+| `RawGlobal` | 全局变量原始数据 (ea, name, size) |
+| `RawStructMember` | 结构体成员 (struct_name, offset, name, size) |
+| `RawCall` | 调用关系 (caller_ea, callee_ea, call_addr, call_type) |
+| `RawDataAccess` | 数据访问 (func_ea, target_ea, is_write, op_type, const_val, is_condition) |
+| `RawBinaryData` | 聚合容器 |
+
+## 图数据模型（`core/models.py`）
 
 项目围绕丰富的图数据模型构建，设计侧重于**"动作意图"**，这是 AI Agent 理解代码逻辑的关键。
 
@@ -158,13 +265,14 @@ IDA-Graphy 是一个复杂的二进制分析框架，使用 IDA Pro 从可执行
 | `const_val` | String | 比较的常量值（如 `if (state == 3)` 中的 `3`）|
 | `loc` | Long | 操作发生的指令 RVA |
 
-### 项目管理（`core/project_manager.py`）
+### 项目管理（`core/project/`）
 - **项目中心式工作流**：将多个二进制文件组织到统一的分析任务中
 - **Neo4j 数据库隔离**：每个项目获得独立数据库（前缀：`idg-project-`）
-- **变更跟踪**：基于 SHA256 的文件修改检测
-- **元数据持久化**：JSON 项目文件 + CSV 缓存
+- **变更跟踪**：基于 SHA256 的文件修改检测（`file_tracker.py`）
+- **元数据持久化**：`files_manifest.json` + 项目元数据
+- **sync 流程编排**：协调提取→映射→导出的完整流程
 
-### IDA 集成
+### IDA 集成（`core/extraction/`）
 - **要求**：IDA Pro 9.0+ 及 idalib Python 绑定
 - **自动分析**：使用 `idalib.open_database()` 进行无头处理
 - **图提取**：自动化的函数/字符串/结构分析
@@ -289,7 +397,7 @@ node_id = hashlib.md5(string_content.encode('utf-8')).hexdigest()
 
 #### 完整示例代码
 
-参考 `core/node_id_generator.py` 中的 `NodeIDGenerator` 类：
+参考 `core/mapping/id_generator.py` 中的 `NodeIDGenerator` 类：
 
 ```python
 class NodeIDGenerator:
@@ -356,22 +464,25 @@ slot_id = gen.get_struct_slot_id("SessionEntry", 8)
 - **Python 包**：PyYAML、neo4j、pandas、tqdm（见 requirements.txt）
 
 ### 跨组件通信
-- **图数据流**：`GraphExtractor` → `GraphData` → `ProjectExporter` → Neo4j/CSV
-- **项目生命周期**：`ProjectManager` 控制元数据，`Neo4jManager` 处理数据库操作
+- **数据流**：`ExtractionEngine` → `RawBinaryData` → `GraphMapper` → `GraphData` → `ExportManager` → Neo4j/CSV/文件
+- **项目生命周期**：`ProjectManager` 编排整个 sync 流程，协调各模块
 - **配置级联**：全局配置 → 项目覆盖 → 运行时参数
 
 ## 常见开发任务
 
 ### 添加新节点类型
-1. 在 `core/models.py` 中定义带 `to_dict()` 方法的 dataclass
-2. 添加到 `GraphData` 容器类
-3. 更新 `exporters/csv_exporter.py` 中的 CSV 导出器
-4. 在 `database/neo4j_manager.py` 中添加 Neo4j 导入逻辑
+1. 在 `core/extraction/raw_data.py` 中添加原始 DTO
+2. 在 `core/extraction/engine.py` 中添加提取逻辑
+3. 在 `core/mapping/graph_mapper.py` 中添加映射逻辑
+4. 在 `core/models.py` 中定义带 `to_dict()` 方法的 dataclass
+5. 更新 `exporters/` 中的导出器
 
 ### 扩展分析能力
-1. 修改 `core/graph_extractor.py` 以提取新数据
-2. 如需要，更新 `core/models.py` 中的边类型
-3. 在 `exporters/` 中添加相应的导出逻辑
+1. 修改 `core/extraction/engine.py` 提取新的原始数据
+2. 在 `core/extraction/raw_data.py` 中定义对应 DTO
+3. 在 `core/mapping/graph_mapper.py` 中添加映射逻辑
+4. 如需要，更新 `core/models.py` 中的边类型
+5. 在 `exporters/` 中添加相应的导出逻辑
 
 ### 添加新命令
 1. 在 `ida_graphy.py` 中添加命令解析器
@@ -383,8 +494,12 @@ slot_id = gen.get_struct_slot_id("SessionEntry", 8)
 - [`core/models.py`]：完整的数据模型定义
 - [`ida_graphy.py`]：CLI 接口和命令实现
 - [`config.yaml`]：综合配置模板
-- [`core/project_manager.py`]：项目生命周期管理
+- [`core/project/manager.py`]：项目生命周期管理
+- [`core/extraction/engine.py`]：IDA 数据提取引擎
+- [`core/extraction/raw_data.py`]：原始数据 DTO 定义
+- [`core/mapping/graph_mapper.py`]：图模型映射器
+- [`core/mapping/id_generator.py`]：节点 ID 生成器
 - [`database/neo4j_manager.py`]：图数据库操作
-- [`exporters/project_exporter.py`]：数据导出协调
+- [`exporters/export_manager.py`]：统一导出管理器
 
-在使用此代码库时，始终理解项目中心式的特性和双重 CSV/Neo4j 存储策略。图数据模型是基础——所有操作都围绕创建、操作和存储这些结构化的二进制分析结果表示。
+在使用此代码库时，始终理解项目中心式的特性和四层模块化架构。数据流向：`提取引擎(RawData)` → `图映射器(GraphData)` → `导出管理器(Neo4j/CSV/文件)`。图数据模型是基础——所有操作都围绕创建、操作和存储这些结构化的二进制分析结果表示。

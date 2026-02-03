@@ -457,7 +457,12 @@ class Neo4jManager:
         # LINKS_TO关系
         for edge in graph_data.links_to:
             result = tx.run("""
-                MATCH (from:Function {uid: $from_id}), (to:Function {uid: $to_id})
+                MERGE (from:Function {uid: $from_id})
+                ON CREATE SET from.func_type = 'IMPORT'
+                MERGE (to:Function {uid: $to_id})
+                ON CREATE SET to.name = $func_name,
+                              to.func_type = 'EXPORT',
+                              to.binary_id = 'EXTERNAL'
                 MERGE (from)-[r:LINKS_TO]->(to)
                 SET r.dll_name = $dll_name, r.func_name = $func_name
                 RETURN count(r) as created

@@ -9,13 +9,7 @@ Date: 2026-02-02
 """
 
 import unittest
-import sys
-import os
-
-# Add parent directory to path to import core modules
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from core.struct_normalizer import StructNameNormalizer, normalize_struct_name
+from core.mapping.struct_normalizer import StructNameNormalizer, normalize_struct_name
 
 
 class TestStructNameNormalizer(unittest.TestCase):

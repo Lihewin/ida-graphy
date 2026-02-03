@@ -19,8 +19,8 @@ def test_module_imports():
     print("="*70)
     
     try:
-        from core.node_id_generator import NodeIDGenerator
-        print("✅ core.node_id_generator 导入成功")
+        from core.mapping.id_generator import NodeIDGenerator
+        print("✅ core.mapping.id_generator 导入成功")
         
         from core.models import (
             BinaryNode, FunctionNode, DataSlotNode, StringNode,
@@ -30,6 +30,12 @@ def test_module_imports():
         
         from exporters.csv_exporter import CSVExporter
         print("✅ exporters.csv_exporter 导入成功")
+
+        from core.extraction.engine import ExtractionEngine
+        print("✅ core.extraction.engine 导入成功")
+
+        from core.mapping.graph_mapper import GraphMapper
+        print("✅ core.mapping.graph_mapper 导入成功")
         
         return True
     except Exception as e:
@@ -42,7 +48,7 @@ def test_id_generation():
     print("测试2: ID生成功能")
     print("="*70)
     
-    from core.node_id_generator import NodeIDGenerator
+    from core.mapping.id_generator import NodeIDGenerator
     
     # 测试Binary ID
     test_content = b"test binary content"
@@ -138,7 +144,8 @@ def test_data_models():
         to_id="slot_001",
         condition=True,
         op_type="CMP",
-        const_val="0x3"
+        const_val="0x3",
+        loc=0x1054
     )
     print(f"✅ ReadsEdge 创建成功: condition={read_edge.condition}")
     
@@ -235,7 +242,7 @@ def test_pe_file_analysis():
         print("⚠️  test_binaries 目录不存在，跳过此测试")
         return True
     
-    from core.node_id_generator import NodeIDGenerator
+    from core.mapping.id_generator import NodeIDGenerator
     
     for pe_file in test_binaries_dir.glob("*.exe"):
         try:
@@ -262,6 +269,14 @@ def test_project_structure():
     required_files = [
         "core/__init__.py",
         "core/node_id_generator.py",
+        "core/mapping/id_generator.py",
+        "core/mapping/struct_normalizer.py",
+        "core/mapping/graph_mapper.py",
+        "core/extraction/raw_data.py",
+        "core/extraction/engine.py",
+        "core/project/metadata.py",
+        "core/project/manager.py",
+        "core/project/file_tracker.py",
         "core/models.py",
         "core/graph_extractor.py",
         "analyzers/__init__.py",

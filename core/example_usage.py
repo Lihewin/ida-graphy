@@ -1,6 +1,6 @@
 """
-Graph Extractor 使用示例
-演示如何使用 GraphExtractor 提取图数据
+ExtractionEngine 使用示例
+演示如何使用 ExtractionEngine + GraphMapper 提取图数据
 """
 
 import os
@@ -9,7 +9,8 @@ import sys
 # 添加 core 模块路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from core.graph_extractor import GraphExtractor
+from core.extraction.engine import ExtractionEngine
+from core.mapping.graph_mapper import GraphMapper
 
 
 def example_usage():
@@ -32,11 +33,11 @@ def example_usage():
     with open(binary_path, 'rb') as f:
         binary_content = f.read()
     
-    # 创建提取器
-    extractor = GraphExtractor(binary_content, binary_path)
-    
-    # 执行完整提取
-    graph_data = extractor.extract_all()
+    # 提取原始数据并映射
+    engine = ExtractionEngine(binary_path)
+    raw_data = engine.extract()
+    mapper = GraphMapper(binary_content=binary_content)
+    graph_data = mapper.map(raw_data)
     
     # 访问提取的数据
     print(f"\n[+] Extraction Results:")
@@ -92,9 +93,11 @@ def standalone_example(binary_path):
             with open(binary_path, 'rb') as f:
                 binary_content = f.read()
             
-            # 创建提取器并执行
-            extractor = GraphExtractor(binary_content, binary_path)
-            graph_data = extractor.extract_all()
+            # 提取原始数据并映射
+            engine = ExtractionEngine(binary_path)
+            raw_data = engine.extract()
+            mapper = GraphMapper(binary_content=binary_content)
+            graph_data = mapper.map(raw_data)
             
             print(f"\n[✓] Extracted {graph_data.node_count()} nodes and {graph_data.edge_count()} edges")
             

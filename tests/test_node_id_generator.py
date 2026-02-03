@@ -10,7 +10,7 @@ This module tests the ID generation logic to ensure:
 
 import unittest
 import hashlib
-from core.node_id_generator import NodeIDGenerator
+from core.mapping.id_generator import NodeIDGenerator
 
 
 class TestNodeIDGenerator(unittest.TestCase):

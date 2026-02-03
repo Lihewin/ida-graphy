@@ -451,7 +451,7 @@ class GraphData:
         # 合并边（避免重复）
         existing_contains = {(c.from_id, c.to_id) for c in self.contains}
         existing_calls = {(c.from_id, c.to_id, c.call_type) for c in self.calls}
-        existing_links_to = {(l.from_id, l.to_id, l.link_type) for l in self.links_to}
+        existing_links_to = {(l.from_id, l.to_id, l.dll_name, l.func_name) for l in self.links_to}
         existing_references = {(r.from_id, r.to_id) for r in self.references}
         existing_writes = {(w.from_id, w.to_id) for w in self.writes}
         existing_reads = {(r.from_id, r.to_id) for r in self.reads}
@@ -474,7 +474,7 @@ class GraphData:
                         break
                 
         for edge in other.links_to:
-            key = (edge.from_id, edge.to_id, edge.link_type)
+            key = (edge.from_id, edge.to_id, edge.dll_name, edge.func_name)
             if key not in existing_links_to:
                 self.links_to.append(edge)
                 
@@ -492,92 +492,7 @@ class GraphData:
 
 
 # ============================================================================
-# Project Management Models
+# Project Management Models (re-export for compatibility)
 # ============================================================================
 
-@dataclass
-class BinaryFile:
-    """项目中的二进制文件信息"""
-    path: str                    # 文件绝对路径
-    name: str                   # 文件名（用于显示）
-    hash: str                   # 文件内容SHA256哈希
-    added_time: str             # 添加到项目的时间 (ISO format)
-    last_analyzed: Optional[str] = None  # 最后分析时间 (ISO format)
-    last_modified: Optional[str] = None  # 文件最后修改时间 (ISO format)
-    size: int = 0               # 文件大小（字节）
-    
-    def to_dict(self) -> dict:
-        """转换为字典用于JSON序列化"""
-        return {
-            'path': self.path,
-            'name': self.name,
-            'hash': self.hash,
-            'added_time': self.added_time,
-            'last_analyzed': self.last_analyzed,
-            'last_modified': self.last_modified,
-            'size': self.size
-        }
-    
-    @classmethod
-    def from_dict(cls, data: dict) -> 'BinaryFile':
-        """从字典创建BinaryFile对象"""
-        return cls(
-            path=data['path'],
-            name=data['name'],
-            hash=data['hash'],
-            added_time=data['added_time'],
-            last_analyzed=data.get('last_analyzed'),
-            last_modified=data.get('last_modified'),
-            size=data.get('size', 0)
-        )
-
-
-@dataclass
-class ProjectMetadata:
-    """项目元数据"""
-    name: str                           # 项目名称
-    description: str                    # 项目描述
-    created_time: str                   # 创建时间 (ISO format)
-    modified_time: str                  # 最后修改时间 (ISO format)
-    database_name: str                  # 对应的Neo4j数据库名
-    binaries: List[BinaryFile] = field(default_factory=list)  # 包含的二进制文件
-    config_overrides: Dict[str, any] = field(default_factory=dict)  # 项目级配置覆盖
-    
-    def to_dict(self) -> dict:
-        """转换为字典用于JSON序列化"""
-        return {
-            'name': self.name,
-            'description': self.description,
-            'created_time': self.created_time,
-            'modified_time': self.modified_time,
-            'database_name': self.database_name,
-            'binaries': [binary.to_dict() for binary in self.binaries],
-            'config_overrides': self.config_overrides
-        }
-    
-    @classmethod
-    def from_dict(cls, data: dict) -> 'ProjectMetadata':
-        """从字典创建ProjectMetadata对象"""
-        binaries = [BinaryFile.from_dict(b) for b in data.get('binaries', [])]
-        return cls(
-            name=data['name'],
-            description=data['description'],
-            created_time=data['created_time'],
-            modified_time=data['modified_time'],
-            database_name=data['database_name'],
-            binaries=binaries,
-            config_overrides=data.get('config_overrides', {})
-        )
-    
-    def save_to_file(self, file_path: str) -> None:
-        """保存项目元数据到JSON文件"""
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(self.to_dict(), f, indent=4, ensure_ascii=False)
-    
-    @classmethod
-    def load_from_file(cls, file_path: str) -> 'ProjectMetadata':
-        """从JSON文件加载项目元数据"""
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        return cls.from_dict(data)
+from core.project.metadata import BinaryFile, ProjectMetadata  # noqa: E402,F401

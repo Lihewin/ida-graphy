@@ -7,11 +7,17 @@ This package provides data export functionality including:
 """
 
 from .csv_exporter import CSVExporter
+from .export_manager import ExportManager
+from .neo4j_exporter import Neo4jExporter, Neo4jExportError, create_neo4j_exporter
 from .project_exporter import ProjectExporter, ProjectExportError, create_project_exporter
 
 __all__ = [
-    'CSVExporter', 
-    'ProjectExporter', 
-    'ProjectExportError', 
+    'CSVExporter',
+    'ExportManager',
+    'Neo4jExporter',
+    'Neo4jExportError',
+    'create_neo4j_exporter',
+    'ProjectExporter',
+    'ProjectExportError',
     'create_project_exporter'
 ]

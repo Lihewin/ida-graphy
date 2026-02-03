@@ -26,7 +26,7 @@ export:
   # Enable file export (decompiled code, structures, etc.)
   # Requires Hex-Rays decompiler plugin
   # Set to true to export human-readable files linked from graph nodes
-  enable_file_export: false
+  enable_file_export: true
 
 # Analysis Options
 analysis:

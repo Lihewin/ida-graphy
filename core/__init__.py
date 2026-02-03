@@ -8,7 +8,7 @@ This module provides the core functionality for ida-graphy including:
 - Node ID generation
 """
 
-from .node_id_generator import NodeIDGenerator
+from .mapping.id_generator import NodeIDGenerator
 from .models import (
     BinaryNode,
     FunctionNode,
@@ -24,7 +24,19 @@ from .models import (
     BinaryFile,
     ProjectMetadata
 )
-from .project_manager import ProjectManager, Project, ProjectError
+from .extraction.raw_data import (
+    RawBinaryInfo,
+    RawFunction,
+    RawString,
+    RawGlobal,
+    RawStructMember,
+    RawCall,
+    RawStringRef,
+    RawImport,
+    RawDataAccess,
+    RawBinaryData,
+)
+from .project.manager import ProjectManager, Project, ProjectError
 from .file_watcher import FileWatcher, ProjectFileMonitor, create_project_monitor
 
 __version__ = "2.0.0"
@@ -49,5 +61,16 @@ __all__ = [
     'ProjectError',
     'FileWatcher',
     'ProjectFileMonitor',
-    'create_project_monitor'
+    'create_project_monitor',
+    'RawBinaryInfo',
+    'RawFunction',
+    'RawString',
+    'RawGlobal',
+    'RawStructMember',
+    'RawCall',
+    'RawStringRef',
+    RawImport,
+    'RawImport',
+    'RawDataAccess',
+    'RawBinaryData'
 ]
