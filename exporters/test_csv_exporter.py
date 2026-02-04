@@ -26,6 +26,7 @@ def create_test_data():
         {
             'hash': binary_hash,
             'name': 'test_binary.exe',
+            'orig_name': 'test_binary.exe',
             'base_addr': 0x400000,
             'arch': 'x86_64',
             'compile_ts': 1609459200
@@ -47,6 +48,7 @@ def create_test_data():
             'uid': id_gen.get_function_id(rva),
             'rva': rva,
             'name': name,
+            'orig_name': name,
             'size': size,
             'is_lib': is_lib,
             'func_type': func_type,
@@ -70,9 +72,11 @@ def create_test_data():
         dataslots.append({
             'uid': id_gen.get_struct_slot_id(base_type, offset),
             'base_type': base_type,
+            'base_type_orig': base_type,
             'offset': offset,
             'size': size,
             'name': name,
+            'orig_name': name,
             'is_global': is_global
         })
     
@@ -86,9 +90,11 @@ def create_test_data():
         dataslots.append({
             'uid': id_gen.get_global_slot_id(rva),
             'base_type': 'GLOBAL',
-            'offset': 0,
+            'base_type_orig': 'GLOBAL',
+            'offset': rva,
             'size': size,
             'name': name,
+            'orig_name': name,
             'is_global': True
         })
     
@@ -105,6 +111,7 @@ def create_test_data():
         strings.append({
             'hash': id_gen.get_string_id(content),
             'content': content,
+            'orig_name': content,
             'encoding': 'ASCII'
         })
     
@@ -117,14 +124,13 @@ def create_test_data():
             'to_id': func['uid'],
             'to_type': 'Function'
         })
-    # Binary包含全局DataSlots
+    # Binary包含所有DataSlots
     for slot in dataslots:
-        if slot['is_global']:
-            contains_edges.append({
-                'from_id': binary_hash,
-                'to_id': slot['uid'],
-                'to_type': 'DataSlot'
-            })
+        contains_edges.append({
+            'from_id': binary_hash,
+            'to_id': slot['uid'],
+            'to_type': 'DataSlot'
+        })
     # Binary包含所有Strings
     for string in strings:
         contains_edges.append({
@@ -225,6 +231,9 @@ def create_test_data():
     
     # LINKS_TO边（动态链接）
     links_to_edges = []  # 简化版，暂不添加
+
+    # EMBEDS边（结构体根到成员）
+    embeds_edges = []
     
     return {
         'binaries': binaries,
@@ -232,6 +241,7 @@ def create_test_data():
         'dataslots': dataslots,
         'strings': strings,
         'contains_edges': contains_edges,
+        'embeds_edges': embeds_edges,
         'calls_edges': calls_edges,
         'links_to_edges': links_to_edges,
         'references_edges': references_edges,
@@ -278,6 +288,7 @@ def test_csv_exporter():
         dataslots=test_data['dataslots'],
         strings=test_data['strings'],
         contains_edges=test_data['contains_edges'],
+        embeds_edges=test_data['embeds_edges'],
         calls_edges=test_data['calls_edges'],
         links_to_edges=test_data['links_to_edges'],
         references_edges=test_data['references_edges'],

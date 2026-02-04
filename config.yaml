@@ -9,71 +9,19 @@ ida:
   # Path to idalib Python bindings (usually under IDA installation)
   idalib_python: "C:\\Program Files\\IDA Professional 9.2\\idalib\\python"
 
-# CSV Export Settings
+# Export Settings
 export:
-  # Output directory for CSV files
-  output_dir: "./csv_output"
-  
-  # Skip library functions (e.g., CRT functions) to reduce output size
-  skip_lib_functions: true
-  
-  # Validate exported data integrity (checks node IDs, edge references)
-  validate_data: true
-  
-  # Generate statistics report after export
-  generate_stats: true
-  
   # Enable file export (decompiled code, structures, etc.)
   # Requires Hex-Rays decompiler plugin
-  # Set to true to export human-readable files linked from graph nodes
   enable_file_export: true
 
 # Analysis Options
 analysis:
   # Enable dataflow analysis (READS/WRITES edges)
-  # Disabling this significantly speeds up processing
   enable_dataflow: true
-  
-  # Analyze string references (REFERENCES edges)
-  enable_string_refs: true
-  
-  # Number of parallel workers for function analysis
-  # Set to 1 to disable parallel processing
-  parallel_workers: 4
-  
-  # Skip functions larger than this threshold (instruction count)
-  # Large functions may cause performance issues
-  max_function_size: 10000
-
-# Structure Canonicalization Settings
-struct_canonicalization:
-  # Enable structure name normalization for cross-binary consistency
-  enabled: true
-  
-  # Case normalization mode: 'lower', 'upper', or 'preserve'
-  case_mode: 'lower'
-  
-  # Aggressively remove numeric suffixes (e.g., Session_1 -> Session)
-  # Set to false to only remove single-digit IDA-style suffixes
-  aggressive_suffix_removal: true
-  
-  # Structure name aliases for cross-binary semantic mapping
-  # Maps variant names to canonical names
-  # Example: Different binaries may use different names for the same structure
-  aliases:
-    # Windows kernel examples
-    # ProcessObject: EPROCESS
-    # _EPROCESS: EPROCESS
-    # tagPROCESS: EPROCESS
-    
-    # Add your custom aliases below:
-    # VariantName: CanonicalName
 
 # Neo4j Integration Settings
 neo4j:
-  # Neo4j installation directory (for batch import scripts)
-  home: "/path/to/neo4j"
-  
   # Connection settings for direct database operations
   connection:
     # Neo4j server URI
@@ -95,9 +43,6 @@ neo4j:
     # Whether to automatically create databases for new projects
     auto_create_database: true
     
-    # Whether to automatically create indexes for new databases
-    auto_create_indexes: true
-    
     # Whether to drop database when deleting project
     drop_database_on_delete: true
 
@@ -105,20 +50,8 @@ neo4j:
 projects:
   # Root directory for all projects
   root_dir: "projects"
-  
-  # Enable automatic file monitoring for projects
-  auto_monitor: false
-  
-  # File monitoring check interval in seconds
-  monitor_interval: 5.0
 
 # Logging Settings
 logging:
-  # Log level: DEBUG, INFO, WARNING, ERROR
-  level: "INFO"
-  
   # Save logs to file
   file: "ida_graphy.log"
-  
-  # Log format
-  format: "[%(asctime)s] %(levelname)s - %(message)s"

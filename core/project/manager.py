@@ -13,7 +13,6 @@ import logging
 
 from core.models import GraphData
 from .metadata import ProjectMetadata, BinaryFile
-from exporters.export_manager import ExportManager
 from core.mapping.symbol_resolver import resolve_symbols
 
 logger = logging.getLogger(__name__)
@@ -340,6 +339,8 @@ class ProjectManager:
                 merged_graph.links_to,
                 binary_names,
             )
+
+            from exporters.export_manager import ExportManager
 
             exporter = ExportManager(config, project)
             exporter.export_all(merged_graph, "")

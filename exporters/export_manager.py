@@ -72,6 +72,8 @@ class ExportManager:
 
         if graph_data.contains:
             file_paths["contains_edges"] = csv_exporter._export_contains_edges([e.to_dict() for e in graph_data.contains])
+        if graph_data.embeds:
+            file_paths["embeds_edges"] = csv_exporter._export_embeds_edges([e.to_dict() for e in graph_data.embeds])
         if graph_data.calls:
             file_paths["calls_edges"] = csv_exporter._export_calls_edges([e.to_dict() for e in graph_data.calls])
         if graph_data.links_to:

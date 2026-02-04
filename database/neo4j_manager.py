@@ -365,6 +365,7 @@ class Neo4jManager:
                 tx.run("""
                     MERGE (b:Binary {hash: $hash})
                     SET b.name = $name,
+                        b.orig_name = $orig_name,
                         b.base_addr = $base_addr,
                         b.arch = $arch,
                         b.compile_ts = $compile_ts
@@ -378,12 +379,14 @@ class Neo4jManager:
                     MERGE (f:Function {uid: $uid})
                     SET f.rva = $rva,
                         f.name = $name,
+                        f.orig_name = $orig_name,
                         f.size = $size,
                         f.is_lib = $is_lib,
                         f.func_type = $func_type,
                         f.signature = $signature,
                         f.complexity = $complexity,
                         f.binary_id = $binary_id,
+                        f.binary_name = $binary_name,
                         f.decompiled_file = $decompiled_file,
                         f.pseudocode_hash = $pseudocode_hash
                 """, function.to_dict())
@@ -395,9 +398,11 @@ class Neo4jManager:
                 tx.run("""
                     MERGE (d:DataSlot {uid: $uid})
                     SET d.base_type = $base_type,
+                        d.base_type_orig = $base_type_orig,
                         d.offset = $offset,
                         d.size = $size,
                         d.name = $name,
+                        d.orig_name = $orig_name,
                         d.is_global = $is_global,
                         d.struct_file = $struct_file
                 """, dataslot.to_dict())
@@ -409,6 +414,7 @@ class Neo4jManager:
                 tx.run("""
                     MERGE (s:String {hash: $hash})
                     SET s.content = $content,
+                        s.orig_name = $orig_name,
                         s.encoding = $encoding
                 """, string.to_dict())
             total_created += len(graph_data.strings)
@@ -418,6 +424,11 @@ class Neo4jManager:
     def _import_relationships(self, tx: Transaction, graph_data: GraphData) -> int:
         """导入关系数据"""
         total_created = 0
+
+        if graph_data.links_to:
+            # Reset external export placeholders and stale LINKS_TO edges before reimport.
+            tx.run("MATCH ()-[r:LINKS_TO]->() DELETE r")
+            tx.run("MATCH (f:Function {binary_id: 'EXTERNAL'}) DETACH DELETE f")
         
         # CONTAINS关系 - 需要正确处理不同节点类型的ID属性
         for edge in graph_data.contains:
@@ -441,6 +452,17 @@ class Neo4jManager:
                 total_created += record['created']
         
         logger.info(f"CONTAINS关系导入完成，创建了 {total_created} 个关系")
+
+        # EMBEDS关系
+        for edge in graph_data.embeds:
+            result = tx.run("""
+                MATCH (from:DataSlot {uid: $from_id}), (to:DataSlot {uid: $to_id})
+                MERGE (from)-[:EMBEDS]->(to)
+                RETURN count(*) as created
+            """, edge.to_dict())
+            record = result.single()
+            if record and record['created'] > 0:
+                total_created += record['created']
         
         # CALLS关系
         for edge in graph_data.calls:
@@ -462,7 +484,8 @@ class Neo4jManager:
                 MERGE (to:Function {uid: $to_id})
                 ON CREATE SET to.name = $func_name,
                               to.func_type = 'EXPORT',
-                              to.binary_id = 'EXTERNAL'
+                              to.binary_id = 'EXTERNAL',
+                              to.binary_name = $dll_name
                 MERGE (from)-[r:LINKS_TO]->(to)
                 SET r.dll_name = $dll_name, r.func_name = $func_name
                 RETURN count(r) as created
@@ -526,35 +549,60 @@ class Neo4jManager:
         try:
             with self.get_session(database_name) as session:
                 with session.begin_transaction() as tx:
-                    # 删除与该二进制相关的所有关系和节点
                     result = tx.run("""
                         MATCH (b:Binary {hash: $hash})
-                        OPTIONAL MATCH (b)-[:CONTAINS]->(contained)
-                        WITH b, collect(DISTINCT contained) as contents
-                        
-                        // 删除与contained节点相关的所有关系
-                        UNWIND contents as c
-                        OPTIONAL MATCH (c)-[r]-()
-                        DELETE r
-                        
-                        // 删除contained节点和binary节点
-                        WITH b, contents
-                        UNWIND contents as c
-                        DELETE c
-                        DELETE b
-                        
-                        RETURN count(DISTINCT c) + 1 as nodes_deleted
+                        OPTIONAL MATCH (b)-[r]-()
+                        WITH b, count(r) as rels
+                        DETACH DELETE b
+                        RETURN rels as relationships_deleted, 1 as nodes_deleted
                     """, hash=binary_hash)
-                    
+
                     record = result.single()
                     if record:
-                        stats['nodes_deleted'] = record['nodes_deleted']
+                        stats['nodes_deleted'] = record.get('nodes_deleted', 0)
+                        stats['relationships_deleted'] = record.get('relationships_deleted', 0)
                     
                     logger.info(f"已删除二进制 {binary_hash} 的数据: {stats}")
                     return stats
                     
         except Exception as e:
             raise Neo4jError(f"删除二进制数据失败: {e}")
+
+    def gc_orphan_nodes(self, database_name: str) -> Dict[str, int]:
+        """
+        删除无任何关系的孤儿节点
+
+        Args:
+            database_name: 数据库名称
+
+        Returns:
+            删除统计信息
+        """
+        stats = {'nodes_deleted': 0}
+
+        try:
+            with self.get_session(database_name) as session:
+                while True:
+                    result = session.run("""
+                        MATCH (n)
+                        WHERE NOT (n)--()
+                        WITH n LIMIT 10000
+                        DETACH DELETE n
+                        RETURN count(n) as deleted
+                    """)
+
+                    record = result.single()
+                    batch_deleted = record.get('deleted', 0) if record else 0
+                    stats['nodes_deleted'] += batch_deleted
+
+                    if batch_deleted == 0:
+                        break
+
+                logger.info("孤儿节点GC完成: %s", stats)
+                return stats
+
+        except Exception as e:
+            raise Neo4jError(f"孤儿节点GC失败: {e}")
     
     def get_database_stats(self, database_name: str) -> Dict[str, int]:
         """

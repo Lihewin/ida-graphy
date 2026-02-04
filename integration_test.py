@@ -100,6 +100,7 @@ def test_data_models():
     binary = BinaryNode(
         hash="abc123",
         name="test.exe",
+        orig_name="test.exe",
         base_addr=0x400000,
         arch="x86_64",
         compile_ts=0
@@ -110,6 +111,7 @@ def test_data_models():
         uid="func_001",
         rva=0x1000,
         name="main",
+        orig_name="main",
         size=256,
         is_lib=False,
         func_type="NORMAL",
@@ -122,9 +124,11 @@ def test_data_models():
     slot = DataSlotNode(
         uid="slot_001",
         base_type="SessionEntry",
+        base_type_orig="SessionEntry",
         offset=8,
         size=4,
         name="status",
+        orig_name="status",
         is_global=False
     )
     print(f"✅ DataSlotNode 创建成功: {slot.name}")
@@ -165,6 +169,7 @@ def test_csv_export():
         BinaryNode(
             hash="test_binary_hash",
             name="test.exe",
+            orig_name="test.exe",
             base_addr=0x400000,
             arch="x86_64",
             compile_ts=0
@@ -176,6 +181,7 @@ def test_csv_export():
             uid="func_001",
             rva=0x1000,
             name="main",
+            orig_name="main",
             size=256,
             is_lib=False,
             func_type="NORMAL",
@@ -189,6 +195,7 @@ def test_csv_export():
         StringNode(
             hash="str_hash_001",
             content="Hello World",
+            orig_name="Hello World",
             encoding="ASCII"
         ).to_dict()
     ]
@@ -205,6 +212,7 @@ def test_csv_export():
             dataslots=[],
             strings=strings,
             contains_edges=[],
+            embeds_edges=[],
             calls_edges=[],
             links_to_edges=[],
             references_edges=[],
@@ -268,7 +276,6 @@ def test_project_structure():
     
     required_files = [
         "core/__init__.py",
-        "core/node_id_generator.py",
         "core/mapping/id_generator.py",
         "core/mapping/struct_normalizer.py",
         "core/mapping/graph_mapper.py",
@@ -278,7 +285,6 @@ def test_project_structure():
         "core/project/manager.py",
         "core/project/file_tracker.py",
         "core/models.py",
-        "core/graph_extractor.py",
         "analyzers/__init__.py",
         "analyzers/dataflow_analyzer.py",
         "exporters/__init__.py",

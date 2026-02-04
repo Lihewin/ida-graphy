@@ -70,11 +70,6 @@ IDA-Graphy 是一个模块化的二进制分析框架，使用 IDA Pro 从可执
 
 ```
 core/
-├── project/                    # 项目管理模块
-│   ├── __init__.py
-│   ├── manager.py              # ProjectManager 主类
-│   ├── metadata.py             # ProjectMetadata, BinaryFile
-│   └── file_tracker.py         # 文件变更追踪
 ├── extraction/                 # 提取引擎模块
 │   ├── __init__.py
 │   ├── engine.py               # ExtractionEngine 主入口
@@ -87,6 +82,11 @@ core/
 │   ├── id_generator.py         # NodeIDGenerator
 │   ├── struct_normalizer.py    # 结构体名称规范化
 │   └── symbol_resolver.py      # 跨二进制符号解析
+├── project/                    # 项目管理模块
+│   ├── __init__.py
+│   ├── manager.py              # ProjectManager 主类
+│   ├── metadata.py             # ProjectMetadata, BinaryFile
+│   └── file_tracker.py         # 文件变更追踪
 └── models.py                   # 图模型定义 (节点/边)
 
 exporters/
@@ -99,6 +99,9 @@ exporters/
 database/
 ├── __init__.py
 └── neo4j_manager.py            # Neo4j 连接管理
+
+# 兼容性与历史文件
+已移除旧兼容层与历史实现，请直接使用 core/mapping 和 core/extraction 下的新模块。
 ```
 
 ## 原始数据 DTO

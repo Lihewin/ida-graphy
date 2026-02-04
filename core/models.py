@@ -12,6 +12,7 @@ Node Types:
 
 Edge Types:
 - ContainsEdge: Physical containment (Binary -> Function/DataSlot/String)
+- EmbedsEdge: Struct membership (DataSlot root -> DataSlot member)
 - CallsEdge: Control flow (Function -> Function)
 - LinksToEdge: Dynamic linking (IMPORT -> EXPORT)
 - ReferencesEdge: Semantic reference (Function -> String)
@@ -41,6 +42,7 @@ class BinaryNode:
     Attributes:
         hash: Primary key, globally unique identifier (SHA256)
         name: Filename (e.g., 'fw_engine.exe')
+        orig_name: Raw name from IDA
         base_addr: Load base address (e.g., 0x140000000) for RVA<->VA conversion
         arch: Architecture (e.g., 'x86_64', 'MIPS', 'ARM')
         compile_ts: Compilation timestamp for version tracking
@@ -49,6 +51,7 @@ class BinaryNode:
     name: str
     base_addr: int
     arch: str
+    orig_name: str = ""
     compile_ts: Optional[int] = None
     
     def to_dict(self) -> dict:
@@ -56,6 +59,7 @@ class BinaryNode:
         return {
             'hash': self.hash,
             'name': self.name,
+            'orig_name': self.orig_name,
             'base_addr': self.base_addr,
             'arch': self.arch,
             'compile_ts': self.compile_ts or 0
@@ -74,17 +78,21 @@ class FunctionNode:
         uid: Primary key, cross-binary unique identifier
         rva: Relative Virtual Address (function start RVA)
         name: Symbol name (e.g., 'Process_Packet') or 'sub_XXXX'
+        orig_name: Raw name from IDA
         size: Function length in bytes
         is_lib: AI filter flag - True if standard library function (to be ignored)
         func_type: Function classification - 'NORMAL', 'IMPORT', 'EXPORT', 'THUNK'
         signature: Function prototype (e.g., 'int func(void* ctx)')
         complexity: Cyclomatic complexity
         binary_id: [Redundant optimization] Hash of parent Binary for fast filtering
+        binary_name: Parent binary filename (e.g., 'kernel32.dll')
     """
     uid: str
     rva: int
     name: str
     binary_id: str
+    binary_name: str = ""
+    orig_name: str = ""
     size: int = 0
     is_lib: bool = False
     func_type: Literal['NORMAL', 'IMPORT', 'EXPORT', 'THUNK'] = 'NORMAL'
@@ -101,12 +109,14 @@ class FunctionNode:
             'uid': self.uid,
             'rva': self.rva,
             'name': self.name,
+            'orig_name': self.orig_name,
             'size': self.size,
             'is_lib': self.is_lib,
             'func_type': self.func_type,
             'signature': self.signature,
             'complexity': self.complexity,
             'binary_id': self.binary_id,
+            'binary_name': self.binary_name,
             'decompiled_file': self.decompiled_file or '',
             'pseudocode_hash': self.pseudocode_hash or ''
         }
@@ -125,9 +135,11 @@ class DataSlotNode:
     Attributes:
         uid: Primary key
         base_type: Structure name (e.g., 'SessionEntry') or 'GLOBAL'
+        base_type_orig: Raw structure name from IDA
         offset: Flattened absolute offset (decimal) for structs, or RVA for globals
         size: Data width (1, 2, 4, 8 bytes)
         name: Readable name (e.g., 'status', 'flags', 'g_Config')
+        orig_name: Raw name from IDA
         is_global: True for global variables, False for struct members
     """
     uid: str
@@ -136,6 +148,8 @@ class DataSlotNode:
     size: int
     name: str
     is_global: bool
+    base_type_orig: str = ""
+    orig_name: str = ""
     
     # File export reference (for struct members only)
     struct_file: Optional[str] = None  # Relative path to .h file (e.g., 'exports/structures/StructName.h')
@@ -145,9 +159,11 @@ class DataSlotNode:
         return {
             'uid': self.uid,
             'base_type': self.base_type,
+            'base_type_orig': self.base_type_orig,
             'offset': self.offset,
             'size': self.size,
             'name': self.name,
+            'orig_name': self.orig_name,
             'is_global': self.is_global,
             'struct_file': self.struct_file or ''
         }
@@ -164,17 +180,20 @@ class StringNode:
     Attributes:
         hash: Primary key (MD5 of content)
         content: Actual string content (needs cleaning, remove garbage)
+        orig_name: Raw content from IDA
         encoding: Character encoding ('ASCII', 'UTF-16', etc.)
     """
     hash: str
     content: str
     encoding: str = 'ASCII'
+    orig_name: str = ""
     
     def to_dict(self) -> dict:
         """Convert to dictionary for CSV export."""
         return {
             'hash': self.hash,
             'content': self.content,
+            'orig_name': self.orig_name,
             'encoding': self.encoding
         }
 
@@ -190,7 +209,7 @@ class ContainsEdge:
     
     Paths:
         - (:Binary) -[:CONTAINS]-> (:Function)
-        - (:Binary) -[:CONTAINS]-> (:DataSlot {is_global:True})
+        - (:Binary) -[:CONTAINS]-> (:DataSlot)
         - (:Binary) -[:CONTAINS]-> (:String)
     
     Purpose: Maintains physical topology for module-level analysis.
@@ -202,6 +221,30 @@ class ContainsEdge:
     from_id: str
     to_id: str
     
+    def to_dict(self) -> dict:
+        """Convert to dictionary for CSV export."""
+        return {
+            'from_id': self.from_id,
+            'to_id': self.to_id
+        }
+
+
+@dataclass
+class EmbedsEdge:
+    """
+    EMBEDS edge - Struct membership relationship.
+
+    Path: (:DataSlot {is_global:false, offset:-1}) -[:EMBEDS]-> (:DataSlot {is_global:false})
+
+    Purpose: Connects a struct root DataSlot to its member DataSlots.
+
+    Attributes:
+        from_id: Struct root DataSlot UID
+        to_id: Struct member DataSlot UID
+    """
+    from_id: str
+    to_id: str
+
     def to_dict(self) -> dict:
         """Convert to dictionary for CSV export."""
         return {
@@ -402,6 +445,7 @@ class GraphData:
     
     # 边集�?
     contains: List[ContainsEdge] = field(default_factory=list)
+    embeds: List[EmbedsEdge] = field(default_factory=list)
     calls: List[CallsEdge] = field(default_factory=list)
     links_to: List[LinksToEdge] = field(default_factory=list)
     references: List[ReferencesEdge] = field(default_factory=list)
@@ -416,8 +460,8 @@ class GraphData:
     
     def edge_count(self):
         """返回总边数"""
-        return (len(self.contains) + len(self.calls) + len(self.links_to) + 
-                len(self.references) + len(self.writes) + len(self.reads))
+        return (len(self.contains) + len(self.embeds) + len(self.calls) +
+            len(self.links_to) + len(self.references) + len(self.writes) + len(self.reads))
     
     def merge(self, other: 'GraphData') -> None:
         """合并另一个GraphData对象到当前对象中
@@ -450,6 +494,7 @@ class GraphData:
         
         # 合并边（避免重复）
         existing_contains = {(c.from_id, c.to_id) for c in self.contains}
+        existing_embeds = {(e.from_id, e.to_id) for e in self.embeds}
         existing_calls = {(c.from_id, c.to_id, c.call_type) for c in self.calls}
         existing_links_to = {(l.from_id, l.to_id, l.dll_name, l.func_name) for l in self.links_to}
         existing_references = {(r.from_id, r.to_id) for r in self.references}
@@ -459,6 +504,10 @@ class GraphData:
         for edge in other.contains:
             if (edge.from_id, edge.to_id) not in existing_contains:
                 self.contains.append(edge)
+
+        for edge in other.embeds:
+            if (edge.from_id, edge.to_id) not in existing_embeds:
+                self.embeds.append(edge)
                 
         for edge in other.calls:
             key = (edge.from_id, edge.to_id, edge.call_type)

@@ -104,7 +104,7 @@ class CSVExporter:
         # 统计信息
         self.stats = {
             'nodes': {'Binary': 0, 'Function': 0, 'DataSlot': 0, 'String': 0},
-            'edges': {'CONTAINS': 0, 'CALLS': 0, 'LINKS_TO': 0, 'REFERENCES': 0, 'WRITES': 0, 'READS': 0},
+            'edges': {'CONTAINS': 0, 'EMBEDS': 0, 'CALLS': 0, 'LINKS_TO': 0, 'REFERENCES': 0, 'WRITES': 0, 'READS': 0},
             'errors': []
         }
         
@@ -174,6 +174,7 @@ class CSVExporter:
             writer.writerow([
                 'hash:ID(Binary)',
                 'name:string',
+                'orig_name:string',
                 'base_addr:long',
                 'arch:string',
                 'compile_ts:long',
@@ -184,6 +185,7 @@ class CSVExporter:
                 writer.writerow([
                     binary['hash'],
                     self._escape_csv_value(binary.get('name', '')),
+                    self._escape_csv_value(binary.get('orig_name', '')),
                     binary.get('base_addr', 0),
                     self._escape_csv_value(binary.get('arch', '')),
                     binary.get('compile_ts', 0),
@@ -227,12 +229,14 @@ class CSVExporter:
                 'uid:ID(Function)',
                 'rva:long',
                 'name:string',
+                'orig_name:string',
                 'size:int',
                 'is_lib:boolean',
                 'func_type:string',
                 'signature:string',
                 'complexity:int',
                 'binary_id:string',
+                'binary_name:string',
                 'decompiled_file:string',  # File export integration
                 'pseudocode_hash:string',  # File export integration
                 ':LABEL'
@@ -243,12 +247,14 @@ class CSVExporter:
                     func['uid'],
                     func.get('rva', 0),
                     self._escape_csv_value(func.get('name', '')),
+                    self._escape_csv_value(func.get('orig_name', '')),
                     func.get('size', 0),
                     str(func.get('is_lib', False)).lower(),  # boolean必须小写
                     self._escape_csv_value(func.get('func_type', 'NORMAL')),
                     self._escape_csv_value(func.get('signature', '')),
                     func.get('complexity', 0),
                     self._escape_csv_value(func.get('binary_id', '')),
+                    self._escape_csv_value(func.get('binary_name', '')),
                     self._escape_csv_value(func.get('decompiled_file', '')),
                     self._escape_csv_value(func.get('pseudocode_hash', '')),
                     'Function'
@@ -339,6 +345,14 @@ class CSVExporter:
                 # struct_file: 保留非空值
                 if slot.get('struct_file') and not existing.get('struct_file'):
                     existing['struct_file'] = slot['struct_file']
+
+                # orig_name: 保留非空值
+                if slot.get('orig_name') and not existing.get('orig_name'):
+                    existing['orig_name'] = slot['orig_name']
+
+                # base_type_orig: 保留非空值
+                if slot.get('base_type_orig') and not existing.get('base_type_orig'):
+                    existing['base_type_orig'] = slot['base_type_orig']
         
         # 统计合并效果
         original_count = len(dataslots)
@@ -355,9 +369,11 @@ class CSVExporter:
             writer.writerow([
                 'uid:ID(DataSlot)',
                 'base_type:string',
+                'base_type_orig:string',
                 'offset:int',
                 'size:int',
                 'name:string',
+                'orig_name:string',
                 'is_global:boolean',
                 'struct_file:string',  # File export integration
                 ':LABEL'
@@ -367,9 +383,11 @@ class CSVExporter:
                 writer.writerow([
                     uid,
                     self._escape_csv_value(slot.get('base_type', '')),
+                    self._escape_csv_value(slot.get('base_type_orig', '')),
                     slot.get('offset', 0),
                     slot.get('size', 0),
                     self._escape_csv_value(slot.get('name', '')),
+                    self._escape_csv_value(slot.get('orig_name', '')),
                     str(slot.get('is_global', False)).lower(),
                     self._escape_csv_value(slot.get('struct_file', '')),
                     'DataSlot'
@@ -403,6 +421,7 @@ class CSVExporter:
             writer.writerow([
                 'hash:ID(String)',
                 'content:string',
+                'orig_name:string',
                 'encoding:string',
                 ':LABEL'
             ])
@@ -411,6 +430,7 @@ class CSVExporter:
                 writer.writerow([
                     string['hash'],
                     self._escape_csv_value(string.get('content', '')),
+                    self._escape_csv_value(string.get('orig_name', '')),
                     self._escape_csv_value(string.get('encoding', 'ASCII')),
                     'String'
                 ])
@@ -457,6 +477,41 @@ class CSVExporter:
                 
                 self.stats['edges']['CONTAINS'] += 1
         
+        return filepath
+
+    def _export_embeds_edges(self, edges: List[Dict[str, Any]]) -> str:
+        """
+        导出EMBEDS边（结构体根到成员）
+
+        Args:
+            edges: 边列表，每个元素包含：
+                - from_id: 起始DataSlot ID
+                - to_id: 目标DataSlot ID
+
+        Returns:
+            生成的CSV文件路径
+        """
+        filepath = os.path.join(self.output_dir, 'edges', 'edges_embeds.csv')
+
+        with open(filepath, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f, escapechar='\\', quoting=csv.QUOTE_MINIMAL)
+
+            # CSV Header
+            writer.writerow([
+                ':START_ID(DataSlot)',
+                ':END_ID(DataSlot)',
+                ':TYPE'
+            ])
+
+            for edge in edges:
+                writer.writerow([
+                    edge['from_id'],
+                    edge['to_id'],
+                    'EMBEDS'
+                ])
+
+                self.stats['edges']['EMBEDS'] += 1
+
         return filepath
     
     def _export_calls_edges(self, edges: List[Dict[str, Any]]) -> str:
@@ -710,6 +765,7 @@ $NEO4J_HOME/bin/neo4j-admin database import full \\
   --nodes=DataSlot="$CSV_DIR/nodes/nodes_dataslot.csv" \\
   --nodes=String="$CSV_DIR/nodes/nodes_string.csv" \\
   --relationships=CONTAINS="$CSV_DIR/edges/edges_contains.csv" \\
+    --relationships=EMBEDS="$CSV_DIR/edges/edges_embeds.csv" \
   --relationships=CALLS="$CSV_DIR/edges/edges_calls.csv" \\
   --relationships=LINKS_TO="$CSV_DIR/edges/edges_links_to.csv" \\
   --relationships=REFERENCES="$CSV_DIR/edges/edges_references.csv" \\
@@ -767,6 +823,7 @@ echo.
   --nodes=DataSlot="%CSV_DIR%nodes\\nodes_dataslot.csv" ^
   --nodes=String="%CSV_DIR%nodes\\nodes_string.csv" ^
   --relationships=CONTAINS="%CSV_DIR%edges\\edges_contains.csv" ^
+    --relationships=EMBEDS="%CSV_DIR%edges\\edges_embeds.csv" ^
   --relationships=CALLS="%CSV_DIR%edges\\edges_calls.csv" ^
   --relationships=LINKS_TO="%CSV_DIR%edges\\edges_links_to.csv" ^
   --relationships=REFERENCES="%CSV_DIR%edges\\edges_references.csv" ^
@@ -910,6 +967,20 @@ SHOW INDEXES;
                         errors.append(f"CALLS edge references non-existent Function: {start_id}")
                     if end_id not in self.function_ids:
                         errors.append(f"CALLS edge references non-existent Function: {end_id}")
+
+        # 检查EMBEDS边
+        embeds_path = os.path.join(self.output_dir, 'edges', 'edges_embeds.csv')
+        if os.path.exists(embeds_path):
+            with open(embeds_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    start_id = row[':START_ID(DataSlot)']
+                    end_id = row[':END_ID(DataSlot)']
+
+                    if start_id not in self.dataslot_ids:
+                        errors.append(f"EMBEDS edge references non-existent DataSlot: {start_id}")
+                    if end_id not in self.dataslot_ids:
+                        errors.append(f"EMBEDS edge references non-existent DataSlot: {end_id}")
         
         # 检查WRITES边
         writes_path = os.path.join(self.output_dir, 'edges', 'edges_writes.csv')
@@ -993,6 +1064,7 @@ SHOW INDEXES;
                    dataslots: List[Dict],
                    strings: List[Dict],
                    contains_edges: List[Dict],
+                   embeds_edges: List[Dict],
                    calls_edges: List[Dict],
                    links_to_edges: List[Dict],
                    references_edges: List[Dict],
@@ -1008,6 +1080,7 @@ SHOW INDEXES;
             dataslots: DataSlot节点列表
             strings: String节点列表
             contains_edges: CONTAINS边列表
+            embeds_edges: EMBEDS边列表
             calls_edges: CALLS边列表
             links_to_edges: LINKS_TO边列表
             references_edges: REFERENCES边列表
@@ -1041,6 +1114,7 @@ SHOW INDEXES;
         print("[2/4] Exporting edges...")
         edge_files = {
             'contains': self._export_contains_edges(contains_edges),
+            'embeds': self._export_embeds_edges(embeds_edges),
             'calls': self._export_calls_edges(calls_edges),
             'links_to': self._export_links_to_edges(links_to_edges),
             'references': self._export_references_edges(references_edges),
@@ -1048,6 +1122,7 @@ SHOW INDEXES;
             'reads': self._export_reads_edges(reads_edges)
         }
         print(f"  + CONTAINS edges: {self.stats['edges']['CONTAINS']}")
+        print(f"  + EMBEDS edges: {self.stats['edges']['EMBEDS']}")
         print(f"  + CALLS edges: {self.stats['edges']['CALLS']}")
         print(f"  + LINKS_TO edges: {self.stats['edges']['LINKS_TO']}")
         print(f"  + REFERENCES edges: {self.stats['edges']['REFERENCES']}")
@@ -1202,6 +1277,7 @@ def example_usage():
         dataslots=dataslots,
         strings=strings,
         contains_edges=contains_edges,
+        embeds_edges=[],
         calls_edges=[],
         links_to_edges=[],
         references_edges=[],

@@ -1,1 +1,0 @@
-"""Compatibility shim for StructNameNormalizer."""from core.mapping.struct_normalizer import (  # noqa: F401    StructNameNormalizer,    normalize_struct_name,    load_aliases_from_config,)__all__ = [    "StructNameNormalizer",    "normalize_struct_name",    "load_aliases_from_config",]

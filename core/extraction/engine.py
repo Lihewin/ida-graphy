@@ -60,9 +60,9 @@ class ExtractionEngine:
         raw.strings = self.extract_strings()
         raw.globals = self.extract_globals()
         raw.struct_members = self.extract_struct_members()
-        raw.calls = self.extract_calls(raw.functions)
-        raw.string_refs = self.extract_string_refs(raw.functions)
         raw.imports = self.extract_imports()
+        raw.calls = self.extract_calls(raw.functions, {imp.ea for imp in raw.imports})
+        raw.string_refs = self.extract_string_refs(raw.functions)
 
         if self.enable_dataflow:
             raw.data_accesses = self.extract_dataflow(raw.functions, raw.globals)
@@ -74,8 +74,11 @@ class ExtractionEngine:
         base_addr = ida_nalt.get_imagebase()
         arch = self._get_arch()
         compile_ts = self._get_compile_ts(base_addr)
+        # Use only IDA root filename for binary naming.
+        root_name = ida_nalt.get_root_filename() or ""
         return RawBinaryInfo(
-            name=self.binary_name,
+            name=root_name,
+            orig_name=root_name,
             base_addr=base_addr,
             arch=arch,
             compile_ts=compile_ts,
@@ -97,6 +100,7 @@ class ExtractionEngine:
             size = func_obj.end_ea - func_obj.start_ea
             signature = self._get_function_signature(func_ea)
             flags = func_obj.flags
+            is_lib = bool(flags & ida_funcs.FUNC_LIB)
             is_thunk = bool(flags & ida_funcs.FUNC_THUNK)
             is_export = func_ea in self._export_set
             is_import = self._is_import_function(func_ea, func_obj, name)
@@ -105,8 +109,10 @@ class ExtractionEngine:
                 RawFunction(
                     ea=func_ea,
                     name=name,
+                    orig_name=name,
                     size=size,
                     flags=flags,
+                    is_lib=is_lib,
                     signature=signature,
                     is_thunk=is_thunk,
                     is_export=is_export,
@@ -123,7 +129,8 @@ class ExtractionEngine:
 
         for s in idautils.Strings():
             try:
-                content = self._clean_string(str(s))
+                raw_content = str(s)
+                content = self._clean_string(raw_content)
                 if len(content) < 2 or not content.strip():
                     continue
                 if content in seen:
@@ -136,7 +143,7 @@ class ExtractionEngine:
                 elif hasattr(s, "strtype"):
                     encoding = "UTF-16" if s.strtype in [1, 2, 3] else "ASCII"
 
-                strings.append(RawString(ea=s.ea, content=content, encoding=encoding))
+                strings.append(RawString(ea=s.ea, content=content, orig_content=raw_content, encoding=encoding))
                 self._string_ea_set.add(s.ea)
             except Exception:
                 continue
@@ -156,7 +163,7 @@ class ExtractionEngine:
             if size == 0:
                 continue
 
-            globals_list.append(RawGlobal(ea=ea, name=name, size=size))
+            globals_list.append(RawGlobal(ea=ea, name=name, orig_name=name, size=size))
 
         return globals_list
 
@@ -165,28 +172,32 @@ class ExtractionEngine:
         members: List[RawStructMember] = []
 
         for _idx, struct_id, struct_name in idautils.Structs():
-            if not struct_name or struct_name.startswith("$") or struct_name.startswith("__"):
+            if not struct_name:
                 continue
 
             for member_offset, member_name, member_size in idautils.StructMembers(struct_id):
-                if not member_name:
-                    member_name = f"field_{member_offset:X}"
+                orig_member_name = member_name or ""
+                display_name = member_name or f"field_{member_offset:X}"
 
                 members.append(
                     RawStructMember(
                         struct_name=struct_name,
+                        struct_orig_name=struct_name,
                         offset=member_offset,
-                        name=member_name,
+                        name=display_name,
+                        orig_name=orig_member_name,
                         size=member_size,
                     )
                 )
 
         return members
 
-    def extract_calls(self, functions: List[RawFunction]) -> List[RawCall]:
+    def extract_calls(self, functions: List[RawFunction], import_eas: Optional[set] = None) -> List[RawCall]:
         """Extract call relationships."""
         calls: List[RawCall] = []
+        seen = set()
         func_starts = {f.ea for f in functions}
+        import_eas = import_eas or set()
 
         for func in functions:
             func_obj = ida_funcs.get_func(func.ea)
@@ -194,17 +205,25 @@ class ExtractionEngine:
                 continue
 
             for head in idautils.FuncItems(func.ea):
+                mnem = idc.print_insn_mnem(head).lower()
                 for xref in idautils.XrefsFrom(head, 0):
                     if xref.type not in [ida_xref.fl_CF, ida_xref.fl_CN]:
                         continue
 
                     callee = ida_funcs.get_func(xref.to)
-                    if not callee:
-                        continue
+                    if callee:
+                        callee_start = callee.start_ea
+                        if callee_start not in func_starts and callee_start not in import_eas:
+                            continue
+                    else:
+                        if xref.to not in import_eas:
+                            continue
+                        callee_start = xref.to
 
-                    callee_start = callee.start_ea
-                    if callee_start not in func_starts:
+                    key = (func.ea, callee_start, head)
+                    if key in seen:
                         continue
+                    seen.add(key)
 
                     calls.append(
                         RawCall(
@@ -214,6 +233,23 @@ class ExtractionEngine:
                             call_type=self._detect_call_type(head),
                         )
                     )
+
+                if import_eas and mnem in ("call", "jmp"):
+                    op_type = idc.get_operand_type(head, 0)
+                    if op_type == idc.o_mem:
+                        target_ea = idc.get_operand_value(head, 0)
+                        if target_ea in import_eas:
+                            key = (func.ea, target_ea, head)
+                            if key not in seen:
+                                seen.add(key)
+                                calls.append(
+                                    RawCall(
+                                        caller_ea=func.ea,
+                                        callee_ea=target_ea,
+                                        call_addr=head,
+                                        call_type=self._detect_call_type(head),
+                                    )
+                                )
 
         return calls
 
@@ -251,7 +287,8 @@ class ExtractionEngine:
 
             def callback(ea, name, _ordinal):
                 if ea and ea != idaapi.BADADDR:
-                    imports.append(RawImport(module=module_name, name=name or "", ea=ea))
+                    ida_name = idc.get_name(ea) or idc.get_func_name(ea) or ""
+                    imports.append(RawImport(module=module_name, name=name or "", ea=ea, ida_name=ida_name))
                 return True
 
             ida_nalt.enum_import_names(i, callback)
@@ -445,12 +482,7 @@ class ExtractionEngine:
         return "DIRECT"
 
     def _is_import_function(self, func_ea: int, func_obj, func_name: str) -> bool:
-        if func_obj.flags & ida_funcs.FUNC_LIB:
-            return True
-        if func_obj.flags & ida_funcs.FUNC_THUNK:
-            if "__imp_" in func_name or self._is_in_import_section(func_ea):
-                return True
-        return False
+        return bool(func_obj.flags & ida_funcs.FUNC_LIB)
 
     def _is_in_import_section(self, ea: int) -> bool:
         seg = ida_segment.getseg(ea)

@@ -1,1 +1,0 @@
-"""Compatibility shim for NodeIDGenerator."""from core.mapping.id_generator import NodeIDGenerator  # noqa: F401__all__ = ["NodeIDGenerator"]

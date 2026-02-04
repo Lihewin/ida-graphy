@@ -23,10 +23,13 @@ class SymbolResolver:
 
         export_count = 0
         for func in functions:
-            if func.func_type == "EXPORT":
-                key = (dll_name, func.name)
-                self.export_table[key] = func.uid
-                export_count += 1
+            if func.func_type != "EXPORT":
+                continue
+            for name_variant in self._name_variants(func.name, func.orig_name):
+                key = (dll_name, name_variant)
+                if key not in self.export_table:
+                    self.export_table[key] = func.uid
+            export_count += 1
 
         if export_count > 0:
             logger.info("Added %d exports from %s", export_count, dll_name)
@@ -38,6 +41,7 @@ class SymbolResolver:
 
         logger.info("Resolving %d LINKS_TO edges against %d exports...", len(edges), len(self.export_table))
         resolved_edges = []
+        seen = set()
 
         for edge in edges:
             dll_func = self._reverse_lookup_virtual_id(edge)
@@ -46,10 +50,13 @@ class SymbolResolver:
                 dll_name, func_name = dll_func
 
                 real_func_uid = None
-                for variant in self._get_dll_name_variants(dll_name):
-                    key = (variant, func_name)
-                    if key in self.export_table:
-                        real_func_uid = self.export_table[key]
+                for dll_variant in self._get_dll_name_variants(dll_name):
+                    for name_variant in self._name_variants(func_name, None):
+                        key = (dll_variant, name_variant)
+                        if key in self.export_table:
+                            real_func_uid = self.export_table[key]
+                            break
+                    if real_func_uid:
                         break
 
                 if real_func_uid:
@@ -60,7 +67,10 @@ class SymbolResolver:
             else:
                 self.unresolved_count += 1
 
-            resolved_edges.append(edge)
+            dedupe_key = (edge.from_id, edge.to_id, edge.dll_name, edge.func_name)
+            if dedupe_key not in seen:
+                resolved_edges.append(edge)
+                seen.add(dedupe_key)
 
         logger.info("Symbol resolution completed:")
         logger.info("  - Resolved: %d", self.resolved_count)
@@ -76,17 +86,47 @@ class SymbolResolver:
     def _get_dll_name_variants(self, dll_name: str) -> List[str]:
         variants = [dll_name.lower()]
 
-        if not dll_name.lower().endswith(".dll"):
-            variants.append(dll_name.lower() + ".dll")
+        lower_name = dll_name.lower()
+        if lower_name.endswith(".dll"):
+            variants.append(lower_name.replace(".dll", ""))
+        elif lower_name.endswith(".exe"):
+            variants.append(lower_name.replace(".exe", ""))
         else:
-            variants.append(dll_name.lower().replace(".dll", ""))
+            variants.append(lower_name + ".dll")
 
         variants.append(dll_name.upper())
-        if dll_name.lower().endswith(".dll"):
+        if lower_name.endswith(".dll"):
             variants.append(dll_name.upper().replace(".DLL", ".dll"))
+        if lower_name.endswith(".exe"):
+            variants.append(dll_name.upper().replace(".EXE", ".exe"))
 
         return list(set(variants))
 
+    def _name_variants(self, name: Optional[str], orig_name: Optional[str]) -> List[str]:
+        variants = set()
+
+        for source in [name, orig_name]:
+            if not source:
+                continue
+            variants.add(source)
+
+            for prefix in ["__imp_", "_imp_"]:
+                if source.startswith(prefix):
+                    variants.add(source[len(prefix):])
+
+            if source.startswith("_"):
+                variants.add(source[1:])
+
+            if "@" in source:
+                base = source.split("@", 1)[0]
+                variants.add(base)
+
+            cleaned = source.lstrip("_")
+            if "@" in cleaned:
+                cleaned = cleaned.split("@", 1)[0]
+            variants.add(cleaned)
+
+        return [v for v in variants if v]
 
 def resolve_symbols(
     all_functions: List[FunctionNode],

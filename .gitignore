@@ -33,7 +33,6 @@ desktop.ini
 
 # Project specific - backup and test data
 backup/
-test_binaries/
 *-export/
 
 # IDA Pro files
@@ -52,5 +51,5 @@ htmlcov/
 *.log
 
 # Export outputs
-test*/
+test_*
 exports/

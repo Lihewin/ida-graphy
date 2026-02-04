@@ -15,6 +15,7 @@ class RawBinaryInfo:
     name: str
     base_addr: int
     arch: str
+    orig_name: str = ""
     compile_ts: int = 0
 
 
@@ -26,6 +27,8 @@ class RawFunction:
     name: str
     size: int
     flags: int
+    is_lib: bool = False
+    orig_name: str = ""
     signature: str = ""
     is_thunk: bool = False
     is_export: bool = False
@@ -38,6 +41,7 @@ class RawString:
 
     ea: int
     content: str
+    orig_content: str = ""
     encoding: str = "ASCII"
 
 
@@ -48,6 +52,7 @@ class RawGlobal:
     ea: int
     name: str
     size: int
+    orig_name: str = ""
 
 
 @dataclass
@@ -58,6 +63,8 @@ class RawStructMember:
     offset: int
     name: str
     size: int
+    struct_orig_name: str = ""
+    orig_name: str = ""
 
 
 @dataclass
@@ -85,6 +92,7 @@ class RawImport:
     module: str
     name: str
     ea: int
+    ida_name: str = ""
 
 
 @dataclass

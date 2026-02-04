@@ -15,6 +15,7 @@ from core.models import (
     DataSlotNode,
     StringNode,
     ContainsEdge,
+    EmbedsEdge,
     CallsEdge,
     LinksToEdge,
     ReferencesEdge,
@@ -37,9 +38,10 @@ class TestNodeModels(unittest.TestCase):
         binary = BinaryNode(
             hash=self.gen.get_binary_id(),
             name="test.exe",
+            orig_name="test.exe",
             base_addr=0x140000000,
             arch="x86_64",
-            compile_ts=1234567890
+            compile_ts=1234567890,
         )
         
         self.assertEqual(binary.name, "test.exe")
@@ -67,6 +69,7 @@ class TestNodeModels(unittest.TestCase):
         binary = BinaryNode(
             hash="test_hash",
             name="test.exe",
+            orig_name="test.exe",
             base_addr=0x140000000,
             arch="x86_64",
             compile_ts=1234567890
@@ -76,6 +79,7 @@ class TestNodeModels(unittest.TestCase):
         
         self.assertEqual(data['hash'], "test_hash")
         self.assertEqual(data['name'], "test.exe")
+        self.assertEqual(data['orig_name'], "test.exe")
         self.assertEqual(data['base_addr'], 0x140000000)
         self.assertEqual(data['arch'], "x86_64")
         self.assertEqual(data['compile_ts'], 1234567890)
@@ -134,6 +138,7 @@ class TestNodeModels(unittest.TestCase):
             uid="test_uid",
             rva=0x1000,
             name="TestFunc",
+            orig_name="TestFunc",
             binary_id="test_binary",
             size=256,
             is_lib=True,
@@ -147,6 +152,7 @@ class TestNodeModels(unittest.TestCase):
         self.assertEqual(data['uid'], "test_uid")
         self.assertEqual(data['rva'], 0x1000)
         self.assertEqual(data['name'], "TestFunc")
+        self.assertEqual(data['orig_name'], "TestFunc")
         self.assertEqual(data['binary_id'], "test_binary")
         self.assertEqual(data['size'], 256)
         self.assertTrue(data['is_lib'])
@@ -157,9 +163,11 @@ class TestNodeModels(unittest.TestCase):
         dataslot = DataSlotNode(
             uid=self.gen.get_struct_slot_id("RECT", 0),
             base_type="RECT",
+            base_type_orig="RECT",
             offset=0,
             size=4,
             name="left",
+            orig_name="left",
             is_global=False
         )
         
@@ -172,9 +180,11 @@ class TestNodeModels(unittest.TestCase):
         dataslot = DataSlotNode(
             uid=self.gen.get_global_slot_id(0x5000),
             base_type="GLOBAL",
+            base_type_orig="GLOBAL",
             offset=0x5000,
             size=8,
             name="g_Config",
+            orig_name="g_Config",
             is_global=True
         )
         
@@ -186,9 +196,11 @@ class TestNodeModels(unittest.TestCase):
         dataslot = DataSlotNode(
             uid="test_uid",
             base_type="MyStruct",
+            base_type_orig="MyStruct",
             offset=8,
             size=4,
             name="field",
+            orig_name="field",
             is_global=False
         )
         
@@ -196,9 +208,11 @@ class TestNodeModels(unittest.TestCase):
         
         self.assertEqual(data['uid'], "test_uid")
         self.assertEqual(data['base_type'], "MyStruct")
+        self.assertEqual(data['base_type_orig'], "MyStruct")
         self.assertEqual(data['offset'], 8)
         self.assertEqual(data['size'], 4)
         self.assertEqual(data['name'], "field")
+        self.assertEqual(data['orig_name'], "field")
         self.assertFalse(data['is_global'])
     
     def test_string_node_creation(self):
@@ -229,6 +243,7 @@ class TestNodeModels(unittest.TestCase):
         string = StringNode(
             hash="test_hash",
             content="Test String",
+            orig_name="Test String",
             encoding="ASCII"
         )
         
@@ -236,6 +251,7 @@ class TestNodeModels(unittest.TestCase):
         
         self.assertEqual(data['hash'], "test_hash")
         self.assertEqual(data['content'], "Test String")
+        self.assertEqual(data['orig_name'], "Test String")
         self.assertEqual(data['encoding'], "ASCII")
 
 
@@ -270,6 +286,19 @@ class TestEdgeModels(unittest.TestCase):
         
         self.assertEqual(data['from_id'], "from_test")
         self.assertEqual(data['to_id'], "to_test")
+
+    def test_embeds_edge_creation(self):
+        """Test EmbedsEdge instantiation."""
+        root_id = self.gen.get_struct_slot_id("RECT", -1)
+        member_id = self.gen.get_struct_slot_id("RECT", 0)
+
+        edge = EmbedsEdge(
+            from_id=root_id,
+            to_id=member_id
+        )
+
+        self.assertEqual(edge.from_id, root_id)
+        self.assertEqual(edge.to_id, member_id)
     
     def test_calls_edge_creation(self):
         """Test CallsEdge instantiation."""
@@ -508,6 +537,7 @@ class TestModelIntegration(unittest.TestCase):
         binary = BinaryNode(
             hash=gen.get_binary_id(),
             name="test.exe",
+            orig_name="test.exe",
             base_addr=0x140000000,
             arch="x86_64"
         )
@@ -516,6 +546,7 @@ class TestModelIntegration(unittest.TestCase):
             uid=gen.get_function_id(0x1000),
             rva=0x1000,
             name="main",
+            orig_name="main",
             binary_id=binary.hash,
             func_type='NORMAL'
         )
@@ -523,15 +554,18 @@ class TestModelIntegration(unittest.TestCase):
         dataslot = DataSlotNode(
             uid=gen.get_struct_slot_id("Config", 0),
             base_type="Config",
+            base_type_orig="Config",
             offset=0,
             size=4,
             name="flags",
+            orig_name="flags",
             is_global=False
         )
         
         string = StringNode(
             hash=gen.get_string_id("Hello"),
             content="Hello",
+            orig_name="Hello",
             encoding="ASCII"
         )
         

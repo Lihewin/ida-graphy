@@ -10,6 +10,7 @@ from core.models import (
     DataSlotNode,
     StringNode,
     ContainsEdge,
+    EmbedsEdge,
     CallsEdge,
     LinksToEdge,
     ReferencesEdge,
@@ -43,6 +44,7 @@ class GraphMapper:
         graph = GraphData()
 
         base_addr = raw_data.binary_info.base_addr if raw_data.binary_info else 0
+        binary_name = raw_data.binary_info.name if raw_data.binary_info else ""
 
         binary_node = self._map_binary(raw_data.binary_info)
         graph.binaries.append(binary_node)
@@ -52,7 +54,7 @@ class GraphMapper:
         import_uids_by_name: Dict[str, str] = {}
         func_uid_set = set()
         for func in raw_data.functions:
-            node = self._map_function(func, base_addr)
+            node = self._map_function(func, base_addr, binary_name)
             func_map[func.ea] = node
             graph.functions.append(node)
             func_uid_set.add(node.uid)
@@ -62,24 +64,28 @@ class GraphMapper:
                         import_uids_by_name[variant] = node.uid
 
         for imp in raw_data.imports:
-            if not imp.name:
+            name_source = imp.name or imp.ida_name
+            if not name_source:
                 continue
             import_uid = self.id_gen.get_function_id(imp.ea - base_addr)
             if import_uid not in func_uid_set:
                 import_node = FunctionNode(
                     uid=import_uid,
                     rva=imp.ea - base_addr,
-                    name=imp.name,
+                    name=name_source,
+                    orig_name=imp.ida_name,
                     size=0,
                     is_lib=True,
                     func_type="IMPORT",
                     signature="",
                     complexity=0,
                     binary_id=self.id_gen.get_binary_id(),
+                    binary_name=binary_name,
                 )
                 graph.functions.append(import_node)
                 func_uid_set.add(import_uid)
-            for variant in self._import_name_variants(imp.name):
+                func_map[imp.ea] = import_node
+            for variant in self._import_name_variants(name_source):
                 if variant and variant not in import_uids_by_name:
                     import_uids_by_name[variant] = import_uid
 
@@ -95,17 +101,38 @@ class GraphMapper:
             global_map[g.ea] = node
             graph.dataslots.append(node)
 
+        struct_root_map: Dict[str, DataSlotNode] = {}
+        struct_orig_name_map: Dict[str, str] = {}
         for member in raw_data.struct_members:
-            node = self._map_struct_member(member)
+            normalized_name = self.normalizer.normalize(member.struct_name)
+            if normalized_name not in struct_orig_name_map:
+                struct_orig_name_map[normalized_name] = member.struct_orig_name or member.struct_name
+
+            root = struct_root_map.get(normalized_name)
+            if not root:
+                root = DataSlotNode(
+                    uid=self.id_gen.get_struct_slot_id(normalized_name, -1),
+                    base_type=normalized_name,
+                    base_type_orig=struct_orig_name_map.get(normalized_name, member.struct_name),
+                    offset=-1,
+                    size=0,
+                    name=normalized_name,
+                    orig_name=struct_orig_name_map.get(normalized_name, member.struct_name),
+                    is_global=False,
+                )
+                struct_root_map[normalized_name] = root
+                graph.dataslots.append(root)
+
+            node = self._map_struct_member(member, normalized_name)
             graph.dataslots.append(node)
+            graph.embeds.append(EmbedsEdge(from_id=root.uid, to_id=node.uid))
 
         for func in graph.functions:
             graph.contains.append(ContainsEdge(from_id=binary_node.hash, to_id=func.uid))
         for s in graph.strings:
             graph.contains.append(ContainsEdge(from_id=binary_node.hash, to_id=s.hash))
         for ds in graph.dataslots:
-            if ds.is_global:
-                graph.contains.append(ContainsEdge(from_id=binary_node.hash, to_id=ds.uid))
+            graph.contains.append(ContainsEdge(from_id=binary_node.hash, to_id=ds.uid))
 
         for call in raw_data.calls:
             edge = self._map_call_edge(call, func_map)
@@ -136,12 +163,13 @@ class GraphMapper:
         return BinaryNode(
             hash=self.id_gen.get_binary_id(),
             name=info.name,
+            orig_name=info.orig_name,
             base_addr=info.base_addr,
             arch=info.arch,
             compile_ts=info.compile_ts,
         )
 
-    def _map_function(self, func: RawFunction, base_addr: int) -> FunctionNode:
+    def _map_function(self, func: RawFunction, base_addr: int, binary_name: str) -> FunctionNode:
         rva = func.ea - base_addr
         func_uid = self.id_gen.get_function_id(rva)
         func_type = self._classify_function(func)
@@ -149,18 +177,21 @@ class GraphMapper:
             uid=func_uid,
             rva=rva,
             name=func.name,
+            orig_name=func.orig_name,
             size=func.size,
-            is_lib=self._is_library_function(func.name, func.flags),
+            is_lib=func.is_lib,
             func_type=func_type,
             signature=func.signature,
             complexity=0,
             binary_id=self.id_gen.get_binary_id(),
+            binary_name=binary_name,
         )
 
     def _map_string(self, string: RawString) -> StringNode:
         return StringNode(
             hash=self.id_gen.get_string_id(string.content),
             content=string.content,
+            orig_name=string.orig_content,
             encoding=string.encoding,
         )
 
@@ -169,20 +200,24 @@ class GraphMapper:
         return DataSlotNode(
             uid=self.id_gen.get_global_slot_id(rva),
             base_type="GLOBAL",
+            base_type_orig="GLOBAL",
             offset=rva,
             size=global_var.size,
             name=global_var.name,
+            orig_name=global_var.orig_name,
             is_global=True,
         )
 
-    def _map_struct_member(self, member: RawStructMember) -> DataSlotNode:
-        normalized_name = self.normalizer.normalize(member.struct_name)
+    def _map_struct_member(self, member: RawStructMember, normalized_name: str = None) -> DataSlotNode:
+        normalized_name = normalized_name or self.normalizer.normalize(member.struct_name)
         return DataSlotNode(
             uid=self.id_gen.get_struct_slot_id(normalized_name, member.offset),
             base_type=normalized_name,
+            base_type_orig=member.struct_orig_name or member.struct_name,
             offset=member.offset,
             size=member.size,
             name=member.name,
+            orig_name=member.orig_name,
             is_global=False,
         )
 

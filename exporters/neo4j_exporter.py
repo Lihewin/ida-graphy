@@ -99,22 +99,30 @@ class Neo4jExporter:
                 self.neo4j_manager.create_indexes(database_name)
                 import_stats = self.neo4j_manager.import_graph_data(database_name, graph_data)
                 total_stats.update(import_stats)
+                gc_stats = self.neo4j_manager.gc_orphan_nodes(database_name)
+                total_stats["nodes_deleted"] += gc_stats.get("nodes_deleted", 0)
                 logger.info("项目 '%s' 首次同步完成: %s", project_metadata.name, total_stats)
                 return total_stats
 
             if changed_binaries:
+                import_stats = self.neo4j_manager.import_graph_data(database_name, graph_data)
+                total_stats.update(import_stats)
+
                 for binary_hash in changed_binaries:
                     del_stats = self.neo4j_manager.remove_binary_data(database_name, binary_hash)
                     total_stats["nodes_deleted"] += del_stats.get("nodes_deleted", 0)
 
-                import_stats = self.neo4j_manager.import_graph_data(database_name, graph_data)
-                total_stats.update(import_stats)
+                gc_stats = self.neo4j_manager.gc_orphan_nodes(database_name)
+                total_stats["nodes_deleted"] += gc_stats.get("nodes_deleted", 0)
+
                 logger.info("项目 '%s' 增量同步完成: %s", project_metadata.name, total_stats)
             else:
                 self.neo4j_manager.clear_database(database_name)
                 self.neo4j_manager.create_indexes(database_name)
                 import_stats = self.neo4j_manager.import_graph_data(database_name, graph_data)
                 total_stats.update(import_stats)
+                gc_stats = self.neo4j_manager.gc_orphan_nodes(database_name)
+                total_stats["nodes_deleted"] += gc_stats.get("nodes_deleted", 0)
                 logger.info("项目 '%s' 全量同步完成: %s", project_metadata.name, total_stats)
 
             return total_stats
