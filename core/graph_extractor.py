@@ -1,5 +1,5 @@
 """
-Graph Extractor
+Graph Extractor (DEPRECATED)
 图数据提取器 - 从IDA数据库中提取符合Neo4j模型的节点和边
 """
 
@@ -51,6 +51,8 @@ class GraphExtractor:
             binary_path: 二进制文件路径
             struct_normalizer: 结构体名称规范化器（可选）
         """
+        logger.error("GraphExtractor is deprecated. Use ExtractionEngine + GraphMapper instead.")
+        raise RuntimeError("GraphExtractor is deprecated. Use ExtractionEngine + GraphMapper.")
         self.binary_path = binary_path
         self.binary_name = os.path.basename(binary_path)
         self.id_gen = NodeIDGenerator(binary_content=binary_content)

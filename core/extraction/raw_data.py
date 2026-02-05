@@ -78,6 +78,7 @@ class RawCall:
     seq_order: int = 0
     in_condition: bool = False
     in_loop: bool = False
+    loop_depth: int = 0
     const_args: Dict[int, str] = field(default_factory=dict)
     return_used: bool = False
     return_in_condition: bool = False

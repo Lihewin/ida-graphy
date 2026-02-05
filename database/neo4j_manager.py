@@ -473,6 +473,7 @@ class Neo4jManager:
                     r.count = $count,
                     r.in_condition = $in_condition,
                     r.in_loop = $in_loop,
+                    r.loop_depth = $loop_depth,
                     r.const_args = $const_args,
                     r.return_used = $return_used,
                     r.return_in_condition = $return_in_condition

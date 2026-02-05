@@ -128,6 +128,7 @@ Properties:
 - `to_id` (callee `uid`)
 - `call_type` (DIRECT, INDIRECT, TAIL)
 - `count` (Int) Number of calls observed
+- `loop_depth` (Int) Loop nesting depth, 0 means not in a loop
 
 ### LINKS_TO
 

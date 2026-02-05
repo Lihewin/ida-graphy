@@ -99,6 +99,27 @@ if IDA_AVAILABLE:
             }
             in_condition = any(op in condition_ops or op in condition_expr_ops for op in parent_ops)
             in_loop = any(op in loop_ops for op in parent_ops)
+            loop_depth = 0
+            seen_parents = set()
+            parents = getattr(self, "parents", None) or []
+            for item in parents:
+                if not item:
+                    continue
+                item_id = id(item)
+                if item_id in seen_parents:
+                    continue
+                seen_parents.add(item_id)
+                op = getattr(item, "op", None)
+                if op in loop_ops:
+                    loop_depth += 1
+            try:
+                parent_insn = self.parent_insn()
+                if parent_insn and id(parent_insn) not in seen_parents:
+                    op = getattr(parent_insn, "op", None)
+                    if op in loop_ops:
+                        loop_depth += 1
+            except Exception:
+                pass
 
             seq_order = self.call_index
             self.call_index += 1
@@ -109,6 +130,7 @@ if IDA_AVAILABLE:
                     "seq_order": seq_order,
                     "in_condition": in_condition,
                     "in_loop": in_loop,
+                    "loop_depth": loop_depth,
                     "const_args": const_args,
                     "return_used": return_used,
                     "return_in_condition": in_condition,

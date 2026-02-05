@@ -269,6 +269,7 @@ class CallsEdge:
         seq_order: Call order within the function
         in_condition: True if the call occurs in a condition expression
         in_loop: True if the call occurs inside a loop body
+        loop_depth: Loop nesting depth, 0 means not in a loop
         const_args: JSON string of constant arguments by index
         return_used: True when the call returns a non-void value
         return_in_condition: True when the call return is used in a condition
@@ -281,6 +282,7 @@ class CallsEdge:
     seq_order: int = 0
     in_condition: bool = False
     in_loop: bool = False
+    loop_depth: int = 0
     const_args: str = ''
     return_used: bool = False
     return_in_condition: bool = False
@@ -296,6 +298,7 @@ class CallsEdge:
             'seq_order': self.seq_order,
             'in_condition': self.in_condition,
             'in_loop': self.in_loop,
+            'loop_depth': self.loop_depth,
             'const_args': self.const_args,
             'return_used': self.return_used,
             'return_in_condition': self.return_in_condition,

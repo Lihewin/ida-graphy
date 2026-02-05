@@ -238,6 +238,7 @@ class GraphMapper:
             seq_order=call.seq_order,
             in_condition=call.in_condition,
             in_loop=call.in_loop,
+            loop_depth=call.loop_depth,
             const_args=const_args,
             return_used=call.return_used,
             return_in_condition=call.return_in_condition,
