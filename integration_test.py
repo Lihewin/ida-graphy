@@ -28,9 +28,6 @@ def test_module_imports():
         )
         print("✅ core.models 导入成功")
         
-        from exporters.csv_exporter import CSVExporter
-        print("✅ exporters.csv_exporter 导入成功")
-
         from core.extraction.engine import ExtractionEngine
         print("✅ core.extraction.engine 导入成功")
 
@@ -155,93 +152,10 @@ def test_data_models():
     
     return True
 
-def test_csv_export():
-    """测试CSV导出功能"""
-    print("\n" + "="*70)
-    print("测试4: CSV导出功能")
-    print("="*70)
-    
-    from exporters.csv_exporter import CSVExporter
-    from core.models import BinaryNode, FunctionNode, StringNode
-    
-    # 创建测试数据
-    binaries = [
-        BinaryNode(
-            hash="test_binary_hash",
-            name="test.exe",
-            orig_name="test.exe",
-            base_addr=0x400000,
-            arch="x86_64",
-            compile_ts=0
-        ).to_dict()
-    ]
-    
-    functions = [
-        FunctionNode(
-            uid="func_001",
-            rva=0x1000,
-            name="main",
-            orig_name="main",
-            size=256,
-            is_lib=False,
-            func_type="NORMAL",
-            signature="int main(void)",
-            complexity=5,
-            binary_id="test_binary_hash"
-        ).to_dict()
-    ]
-    
-    strings = [
-        StringNode(
-            hash="str_hash_001",
-            content="Hello World",
-            orig_name="Hello World",
-            encoding="ASCII"
-        ).to_dict()
-    ]
-    
-    # 测试导出
-    output_dir = project_root / "test_output"
-    exporter = CSVExporter(str(output_dir))
-    exporter.set_binary_hash("test_binary_hash")
-    
-    try:
-        result = exporter.export_all(
-            binaries=binaries,
-            functions=functions,
-            dataslots=[],
-            strings=strings,
-            contains_edges=[],
-            embeds_edges=[],
-            calls_edges=[],
-            links_to_edges=[],
-            references_edges=[],
-            writes_edges=[],
-            reads_edges=[],
-            validate=True
-        )
-        
-        # 检查是否导出成功（检查输出目录是否存在文件）
-        if output_dir.exists():
-            csv_files = list(output_dir.glob("**/*.csv"))
-            if csv_files:
-                print(f"✅ CSV导出成功到: {output_dir}")
-                print(f"   生成CSV文件: {len(csv_files)} 个")
-                return True
-        
-        print(f"❌ CSV导出失败")
-        return False
-            
-    except Exception as e:
-        print(f"❌ CSV导出异常: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
 def test_pe_file_analysis():
     """测试PE文件哈希计算"""
     print("\n" + "="*70)
-    print("测试5: PE文件哈希计算")
+    print("测试4: PE文件哈希计算")
     print("="*70)
     
     test_binaries_dir = project_root / "test_binaries"
@@ -271,7 +185,7 @@ def test_pe_file_analysis():
 def test_project_structure():
     """验证项目结构完整性"""
     print("\n" + "="*70)
-    print("测试6: 项目结构验证")
+    print("测试5: 项目结构验证")
     print("="*70)
     
     required_files = [
@@ -288,7 +202,6 @@ def test_project_structure():
         "analyzers/__init__.py",
         "analyzers/dataflow_analyzer.py",
         "exporters/__init__.py",
-        "exporters/csv_exporter.py",
         "ida_graphy.py",
         "config.yaml",
         "requirements.txt",
@@ -320,7 +233,6 @@ def main():
         ("模块导入", test_module_imports),
         ("ID生成", test_id_generation),
         ("数据模型", test_data_models),
-        ("CSV导出", test_csv_export),
         ("PE文件分析", test_pe_file_analysis),
         ("项目结构", test_project_structure),
     ]

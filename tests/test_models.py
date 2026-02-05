@@ -309,11 +309,22 @@ class TestEdgeModels(unittest.TestCase):
             from_id=caller_id,
             to_id=callee_id,
             call_type='DIRECT',
-            count=5
+            count=5,
+            loc=0x1200,
+            seq_order=3,
+            in_condition=True,
+            in_loop=False,
+            const_args='{"0":"0x1"}',
+            return_used=True,
+            return_in_condition=True,
         )
         
         self.assertEqual(edge.call_type, 'DIRECT')
         self.assertEqual(edge.count, 5)
+        self.assertEqual(edge.loc, 0x1200)
+        self.assertEqual(edge.seq_order, 3)
+        self.assertTrue(edge.in_condition)
+        self.assertTrue(edge.return_used)
     
     def test_calls_edge_call_types(self):
         """Test CallsEdge with different call types."""
@@ -336,7 +347,14 @@ class TestEdgeModels(unittest.TestCase):
             from_id="func1",
             to_id="func2",
             call_type='INDIRECT',
-            count=3
+            count=3,
+            loc=0x2000,
+            seq_order=4,
+            in_condition=False,
+            in_loop=True,
+            const_args='{"1":"\"path\""}',
+            return_used=False,
+            return_in_condition=False,
         )
         
         data = edge.to_dict()
@@ -345,6 +363,10 @@ class TestEdgeModels(unittest.TestCase):
         self.assertEqual(data['to_id'], "func2")
         self.assertEqual(data['type'], 'INDIRECT')
         self.assertEqual(data['count'], 3)
+        self.assertEqual(data['loc'], 0x2000)
+        self.assertEqual(data['seq_order'], 4)
+        self.assertFalse(data['in_condition'])
+        self.assertTrue(data['in_loop'])
     
     def test_links_to_edge_creation(self):
         """Test LinksToEdge instantiation."""

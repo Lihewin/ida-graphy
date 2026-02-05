@@ -473,7 +473,7 @@ class GraphExtractor:
         logger.info("Extracting CALLS edges...")
         
         call_edges = []
-        call_count_map = {}  # {(from, to): count}
+        base_addr = ida_nalt.get_imagebase()
         
         for func in tqdm(self.graph_data.functions, desc="Analyzing calls"):
             try:
@@ -481,6 +481,8 @@ class GraphExtractor:
                 func_obj = ida_funcs.get_func(func_ea)
                 if not func_obj:
                     continue
+
+                seq_order = 0
                 
                 # 遍历函数中的所有指令
                 for head in idautils.FuncItems(func_ea):
@@ -505,28 +507,21 @@ class GraphExtractor:
                         # 判断调用类型
                         call_type = self._detect_call_type(head, xref)
                         
-                        # 统计调用次数
-                        key = (func.uid, callee_uid)
-                        call_count_map[key] = call_count_map.get(key, 0) + 1
+                        edge = CallsEdge(
+                            from_id=func.uid,
+                            to_id=callee_uid,
+                            call_type=call_type,
+                            count=1,
+                            loc=head - base_addr,
+                            seq_order=seq_order,
+                        )
+                        call_edges.append(edge)
+                        self.graph_data.calls.append(edge)
+                        seq_order += 1
                 
             except Exception as e:
                 logger.warning(f"Failed to analyze calls for {func.name}: {e}")
                 continue
-        
-        # 创建 CALLS 边
-        for (from_id, to_id), count in call_count_map.items():
-            # 避免自调用（可选）
-            if from_id == to_id:
-                continue
-            
-            edge = CallsEdge(
-                from_id=from_id,
-                to_id=to_id,
-                call_type="DIRECT",  # 简化处理，详细分析可在后续扩展
-                count=count
-            )
-            call_edges.append(edge)
-            self.graph_data.calls.append(edge)
         
         logger.info(f"Extracted {len(call_edges)} CALLS edges")
         return call_edges

@@ -1,0 +1,28 @@
+{
+    "name": "win-pcaui",
+    "description": "Windows built-in pcaui",
+    "created_time": "2026-02-04T21:24:11.069550",
+    "modified_time": "2026-02-04T21:24:28.893975",
+    "database_name": "idg-project-win-pcaui",
+    "binaries": [
+        {
+            "path": "C:\\Windows\\System32\\pcaui.exe",
+            "name": "pcaui.exe",
+            "hash": "d47e521b4a71e5bdcf545f1d69d609c1263aab0cd2475d35e186ee09d2617263",
+            "added_time": "2026-02-04T21:24:16.327004",
+            "last_analyzed": "2026-02-04T21:24:28.892930",
+            "last_modified": "2025-11-14T15:42:43.984176",
+            "size": 222208
+        },
+        {
+            "path": "C:\\Windows\\System32\\pcaui.dll",
+            "name": "pcaui.dll",
+            "hash": "0c9b7aadbf15be66701209f66bf497c0b88395c4977bbc503a9004bc2b47fb13",
+            "added_time": "2026-02-04T21:24:20.216384",
+            "last_analyzed": "2026-02-04T21:24:28.893975",
+            "last_modified": "2025-11-14T15:42:44.093890",
+            "size": 132608
+        }
+    ],
+    "config_overrides": {}
+}

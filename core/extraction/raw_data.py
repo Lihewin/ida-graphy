@@ -5,7 +5,7 @@ by the mapping layer.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -75,6 +75,12 @@ class RawCall:
     callee_ea: int
     call_addr: int
     call_type: str = "DIRECT"
+    seq_order: int = 0
+    in_condition: bool = False
+    in_loop: bool = False
+    const_args: Dict[int, str] = field(default_factory=dict)
+    return_used: bool = False
+    return_in_condition: bool = False
 
 
 @dataclass

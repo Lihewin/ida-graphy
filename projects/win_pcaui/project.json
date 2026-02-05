@@ -1,0 +1,9 @@
+{
+    "name": "win_pcaui",
+    "description": "Windows built-in pcaui",
+    "created_time": "2026-02-04T21:24:02.805213",
+    "modified_time": "2026-02-04T21:24:02.805213",
+    "database_name": "idg-project-win_pcaui",
+    "binaries": [],
+    "config_overrides": {}
+}

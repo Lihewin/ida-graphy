@@ -55,7 +55,7 @@ class BinaryNode:
     compile_ts: Optional[int] = None
     
     def to_dict(self) -> dict:
-        """Convert to dictionary for CSV export."""
+        """Convert to dictionary for export."""
         return {
             'hash': self.hash,
             'name': self.name,
@@ -104,7 +104,7 @@ class FunctionNode:
     pseudocode_hash: Optional[str] = None  # SHA256 hash for change detection
     
     def to_dict(self) -> dict:
-        """Convert to dictionary for CSV export."""
+        """Convert to dictionary for export."""
         return {
             'uid': self.uid,
             'rva': self.rva,
@@ -155,7 +155,7 @@ class DataSlotNode:
     struct_file: Optional[str] = None  # Relative path to .h file (e.g., 'exports/structures/StructName.h')
     
     def to_dict(self) -> dict:
-        """Convert to dictionary for CSV export."""
+        """Convert to dictionary for export."""
         return {
             'uid': self.uid,
             'base_type': self.base_type,
@@ -189,7 +189,7 @@ class StringNode:
     orig_name: str = ""
     
     def to_dict(self) -> dict:
-        """Convert to dictionary for CSV export."""
+        """Convert to dictionary for export."""
         return {
             'hash': self.hash,
             'content': self.content,
@@ -222,7 +222,7 @@ class ContainsEdge:
     to_id: str
     
     def to_dict(self) -> dict:
-        """Convert to dictionary for CSV export."""
+        """Convert to dictionary for export."""
         return {
             'from_id': self.from_id,
             'to_id': self.to_id
@@ -246,7 +246,7 @@ class EmbedsEdge:
     to_id: str
 
     def to_dict(self) -> dict:
-        """Convert to dictionary for CSV export."""
+        """Convert to dictionary for export."""
         return {
             'from_id': self.from_id,
             'to_id': self.to_id
@@ -265,19 +265,40 @@ class CallsEdge:
         to_id: Callee function UID
         call_type: 'DIRECT' (direct call), 'INDIRECT' (vtable/pointer), 'TAIL' (tail call)
         count: Number of times called (high frequency may indicate loops)
+        loc: Call instruction RVA
+        seq_order: Call order within the function
+        in_condition: True if the call occurs in a condition expression
+        in_loop: True if the call occurs inside a loop body
+        const_args: JSON string of constant arguments by index
+        return_used: True when the call returns a non-void value
+        return_in_condition: True when the call return is used in a condition
     """
     from_id: str
     to_id: str
     call_type: Literal['DIRECT', 'INDIRECT', 'TAIL'] = 'DIRECT'
     count: int = 1
+    loc: int = 0
+    seq_order: int = 0
+    in_condition: bool = False
+    in_loop: bool = False
+    const_args: str = ''
+    return_used: bool = False
+    return_in_condition: bool = False
     
     def to_dict(self) -> dict:
-        """Convert to dictionary for CSV export."""
+        """Convert to dictionary for export."""
         return {
             'from_id': self.from_id,
             'to_id': self.to_id,
             'type': self.call_type,
-            'count': self.count
+            'count': self.count,
+            'loc': self.loc,
+            'seq_order': self.seq_order,
+            'in_condition': self.in_condition,
+            'in_loop': self.in_loop,
+            'const_args': self.const_args,
+            'return_used': self.return_used,
+            'return_in_condition': self.return_in_condition,
         }
 
 
@@ -302,7 +323,7 @@ class LinksToEdge:
     func_name: Optional[str] = None
     
     def to_dict(self) -> dict:
-        """Convert to dictionary for CSV export."""
+        """Convert to dictionary for export."""
         return {
             'from_id': self.from_id,
             'to_id': self.to_id,
@@ -328,7 +349,7 @@ class ReferencesEdge:
     to_id: str
     
     def to_dict(self) -> dict:
-        """Convert to dictionary for CSV export."""
+        """Convert to dictionary for export."""
         return {
             'from_id': self.from_id,
             'to_id': self.to_id
@@ -359,7 +380,7 @@ class WritesEdge:
     const_val: Optional[str] = None
     
     def to_dict(self) -> dict:
-        """Convert to dictionary for CSV export."""
+        """Convert to dictionary for export."""
         return {
             'from_id': self.from_id,
             'to_id': self.to_id,
@@ -395,7 +416,7 @@ class ReadsEdge:
     const_val: Optional[str] = None
     
     def to_dict(self) -> dict:
-        """Convert to dictionary for CSV export."""
+        """Convert to dictionary for export."""
         return {
             'from_id': self.from_id,
             'to_id': self.to_id,
@@ -495,7 +516,7 @@ class GraphData:
         # 合并边（避免重复）
         existing_contains = {(c.from_id, c.to_id) for c in self.contains}
         existing_embeds = {(e.from_id, e.to_id) for e in self.embeds}
-        existing_calls = {(c.from_id, c.to_id, c.call_type) for c in self.calls}
+        existing_calls = {(c.from_id, c.to_id, c.call_type, c.loc, c.seq_order) for c in self.calls}
         existing_links_to = {(l.from_id, l.to_id, l.dll_name, l.func_name) for l in self.links_to}
         existing_references = {(r.from_id, r.to_id) for r in self.references}
         existing_writes = {(w.from_id, w.to_id) for w in self.writes}
@@ -510,7 +531,7 @@ class GraphData:
                 self.embeds.append(edge)
                 
         for edge in other.calls:
-            key = (edge.from_id, edge.to_id, edge.call_type)
+            key = (edge.from_id, edge.to_id, edge.call_type, edge.loc, edge.seq_order)
             if key not in existing_calls:
                 self.calls.append(edge)
             else:
@@ -518,7 +539,9 @@ class GraphData:
                 for existing_call in self.calls:
                     if (existing_call.from_id == edge.from_id and 
                         existing_call.to_id == edge.to_id and 
-                        existing_call.call_type == edge.call_type):
+                        existing_call.call_type == edge.call_type and
+                        existing_call.loc == edge.loc and
+                        existing_call.seq_order == edge.seq_order):
                         existing_call.count += edge.count
                         break
                 

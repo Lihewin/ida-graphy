@@ -11,7 +11,7 @@ applyTo: '**'
 **主动使用context7获取最新准确的外部库信息**：
 - 涉及任何第三方库或框架时，优先查询context7获取最新API
 - 不要依赖可能过时的内置知识，特别是对于快速迭代的库
-- 包括但不限于：Neo4j、IDA Python API、pytest、pandas等
+- 包括但不限于：Neo4j、IDA Python API、pytest等
 - 即使是常见库，也建议查询以确保信息准确性
 
 **何时可以跳过context7**：

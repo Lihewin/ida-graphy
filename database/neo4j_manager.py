@@ -8,7 +8,7 @@ for complete data isolation.
 Key Features:
 - Database creation and deletion
 - Connection management with connection pooling
-- Direct data import without CSV intermediates
+- Direct data import without intermediates
 - Transaction support for data consistency
 - Health checks and status monitoring
 - Automatic index creation for performance
@@ -468,8 +468,14 @@ class Neo4jManager:
         for edge in graph_data.calls:
             result = tx.run("""
                 MATCH (from:Function {uid: $from_id}), (to:Function {uid: $to_id})
-                MERGE (from)-[r:CALLS]->(to)
-                SET r.type = $type, r.count = $count
+                MERGE (from)-[r:CALLS {loc: $loc, seq_order: $seq_order}]->(to)
+                SET r.type = $type,
+                    r.count = $count,
+                    r.in_condition = $in_condition,
+                    r.in_loop = $in_loop,
+                    r.const_args = $const_args,
+                    r.return_used = $return_used,
+                    r.return_in_condition = $return_in_condition
                 RETURN count(r) as created
             """, edge.to_dict())
             record = result.single()

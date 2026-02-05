@@ -555,7 +555,7 @@ def cmd_project_sync(args, config: Dict) -> int:
             logger.error("分析失败，无法生成图数据")
             return 1
         
-        # 导出到Neo4j或CSV
+        # 导出到Neo4j
         try:
             neo4j_exporter = create_neo4j_exporter(config)
             if neo4j_exporter.neo4j_manager:
@@ -567,9 +567,8 @@ def cmd_project_sync(args, config: Dict) -> int:
                 print(f"   创建关系: {stats.get('relationships_created', 0)}")
                 print(f"   删除节点: {stats.get('nodes_deleted', 0)}")
             else:
-                exporter = ExportManager(config, project)
-                exporter.export_to_csv(graph_data)
-                print("✅ 数据已导出到CSV文件")
+                logger.error("Neo4j未配置或连接失败，无法同步")
+                return 1
 
         except Exception as e:
             logger.error(f"同步失败: {e}")

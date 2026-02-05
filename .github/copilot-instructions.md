@@ -45,7 +45,6 @@ IDA-Graphy 是一个模块化的二进制分析框架，使用 IDA Pro 从可执
 │              4. ExportManager (导出管理器)                        │
 │   exporters/                                                     │
 │   - Neo4j 数据库导出                                              │
-│   - CSV 兼容导出                                                  │
 │   - 文件导出 (伪C、结构体、导入导出表、字符串表)                     │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -57,7 +56,7 @@ IDA-Graphy 是一个模块化的二进制分析框架，使用 IDA Pro 从可执
 | **ProjectManager** | CLI 命令 | 协调其他模块 | 项目 CRUD、文件变更追踪、sync 流程编排 |
 | **ExtractionEngine** | 二进制文件路径 | `RawBinaryData` DTO | IDA API 调用、原始数据收集、DataFlow 分析 |
 | **GraphMapper** | `RawBinaryData` | `GraphData` | ID 生成、模型构建、结构体规范化 |
-| **ExportManager** | `GraphData` | Neo4j/CSV/文件 | 数据持久化、文件生成 |
+| **ExportManager** | `GraphData` | Neo4j/文件 | 数据持久化、文件生成 |
 
 ### 关键设计原则
 
@@ -93,7 +92,6 @@ exporters/
 ├── __init__.py
 ├── export_manager.py           # ExportManager 统一接口
 ├── neo4j_exporter.py           # Neo4j 导出
-├── csv_exporter.py             # CSV 导出
 └── file_exporter.py            # 文件导出 (伪C/结构体/表)
 
 database/
@@ -282,7 +280,6 @@ database/
 
 ### 存储层
 - **主要方式**：Neo4j 图数据库（可配置连接）
-- **备用方案**：CSV 导出（兼容 Neo4j）
 - **事务支持**：原子操作确保数据一致性
 
 ## 关键开发工作流
@@ -456,7 +453,6 @@ slot_id = gen.get_struct_slot_id("SessionEntry", 8)
 
 ### 错误处理模式
 - **自定义异常**：`ProjectError`、`Neo4jError`、`ProjectExportError`
-- **优雅降级**：Neo4j 不可用时回退到 CSV
 - **事务回滚**：失败时保证数据库一致性
 
 ## 集成点
@@ -464,10 +460,10 @@ slot_id = gen.get_struct_slot_id("SessionEntry", 8)
 ### 外部依赖
 - **IDA Pro 9.0+**：二进制分析必需（不可通过 pip 安装）
 - **Neo4j**：可选但推荐用于图操作
-- **Python 包**：PyYAML、neo4j、pandas、tqdm（见 requirements.txt）
+- **Python 包**：PyYAML、neo4j、tqdm（见 requirements.txt）
 
 ### 跨组件通信
-- **数据流**：`ExtractionEngine` → `RawBinaryData` → `GraphMapper` → `GraphData` → `ExportManager` → Neo4j/CSV/文件
+- **数据流**：`ExtractionEngine` → `RawBinaryData` → `GraphMapper` → `GraphData` → `ExportManager` → Neo4j/文件
 - **项目生命周期**：`ProjectManager` 编排整个 sync 流程，协调各模块
 - **配置级联**：全局配置 → 项目覆盖 → 运行时参数
 
@@ -505,4 +501,4 @@ slot_id = gen.get_struct_slot_id("SessionEntry", 8)
 - [`database/neo4j_manager.py`]：图数据库操作
 - [`exporters/export_manager.py`]：统一导出管理器
 
-在使用此代码库时，始终理解项目中心式的特性和四层模块化架构。数据流向：`提取引擎(RawData)` → `图映射器(GraphData)` → `导出管理器(Neo4j/CSV/文件)`。图数据模型是基础——所有操作都围绕创建、操作和存储这些结构化的二进制分析结果表示。
+在使用此代码库时，始终理解项目中心式的特性和四层模块化架构。数据流向：`提取引擎(RawData)` → `图映射器(GraphData)` → `导出管理器(Neo4j/文件)`。图数据模型是基础——所有操作都围绕创建、操作和存储这些结构化的二进制分析结果表示。

@@ -1,6 +1,7 @@
 """Graph mapper from raw DTOs to graph models."""
 
 import hashlib
+import json
 from typing import Dict, List
 
 from core.models import (
@@ -135,7 +136,7 @@ class GraphMapper:
             graph.contains.append(ContainsEdge(from_id=binary_node.hash, to_id=ds.uid))
 
         for call in raw_data.calls:
-            edge = self._map_call_edge(call, func_map)
+            edge = self._map_call_edge(call, func_map, base_addr)
             if edge:
                 graph.calls.append(edge)
 
@@ -221,16 +222,25 @@ class GraphMapper:
             is_global=False,
         )
 
-    def _map_call_edge(self, call: RawCall, func_map: Dict[int, FunctionNode]) -> CallsEdge:
+    def _map_call_edge(self, call: RawCall, func_map: Dict[int, FunctionNode], base_addr: int) -> CallsEdge:
         caller = func_map.get(call.caller_ea)
         callee = func_map.get(call.callee_ea)
         if not caller or not callee:
             return None
+        loc = call.call_addr - base_addr if call.call_addr and base_addr else 0
+        const_args = json.dumps(call.const_args, sort_keys=True) if call.const_args else ""
         return CallsEdge(
             from_id=caller.uid,
             to_id=callee.uid,
             call_type=call.call_type,
             count=1,
+            loc=loc,
+            seq_order=call.seq_order,
+            in_condition=call.in_condition,
+            in_loop=call.in_loop,
+            const_args=const_args,
+            return_used=call.return_used,
+            return_in_condition=call.return_in_condition,
         )
 
     def _map_string_ref(

@@ -172,6 +172,6 @@ class Neo4jExporter:
 def create_neo4j_exporter(config: Dict) -> Neo4jExporter:
     neo4j_config = config.get("neo4j", {}).get("connection", {})
     if not neo4j_config.get("uri"):
-        logger.warning("Neo4j配置不完整，仅支持CSV导出")
+        logger.warning("Neo4j配置不完整，无法导出")
         return Neo4jExporter()
     return Neo4jExporter(neo4j_config)

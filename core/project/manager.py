@@ -39,10 +39,6 @@ class ProjectManager:
         """获取项目元数据文件路径"""
         return self._get_project_dir(project_name) / "project.json"
 
-    def _get_csv_cache_dir(self, project_name: str) -> Path:
-        """获取CSV缓存目录路径"""
-        return self._get_project_dir(project_name) / "csv_cache"
-
     def _get_binaries_dir(self, project_name: str) -> Path:
         """获取二进制文件信息目录路径"""
         return self._get_project_dir(project_name) / "binaries"
@@ -84,7 +80,6 @@ class ProjectManager:
             raise ProjectError(f"项目 '{project_name}' 已存在")
 
         project_dir.mkdir(parents=True)
-        self._get_csv_cache_dir(project_name).mkdir()
         self._get_binaries_dir(project_name).mkdir()
 
         now = datetime.now().isoformat()
@@ -253,17 +248,6 @@ class ProjectManager:
                 metadata.modified_time = datetime.now().isoformat()
                 metadata.save_to_file(str(self._get_project_file(project_name)))
                 break
-
-    def get_csv_cache_path(self, project_name: str) -> str:
-        """获取项目CSV缓存目录路径"""
-        return str(self._get_csv_cache_dir(project_name))
-
-    def clear_csv_cache(self, project_name: str) -> None:
-        """清空项目的CSV缓存"""
-        csv_dir = self._get_csv_cache_dir(project_name)
-        if csv_dir.exists():
-            shutil.rmtree(csv_dir)
-            csv_dir.mkdir()
 
     def sync(self, project_name: str, config: Dict, force: bool = False) -> Dict[str, any]:
         """同步项目：提取 -> 映射 -> 导出"""

@@ -4,9 +4,6 @@
 # YAML configuration parsing
 PyYAML>=6.0
 
-# CSV processing (optional, for validation)
-pandas>=1.5.0
-
 # Progress bar
 tqdm>=4.65.0
 

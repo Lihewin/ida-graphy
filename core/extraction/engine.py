@@ -19,6 +19,7 @@ from .raw_data import (
     RawImport,
     RawDataAccess,
 )
+from .call_analyzer import extract_call_contexts
 
 try:
     import ida_funcs
@@ -198,6 +199,44 @@ class ExtractionEngine:
         seen = set()
         func_starts = {f.ea for f in functions}
         import_eas = import_eas or set()
+        (
+            call_contexts_by_addr,
+            call_contexts_by_pair,
+            call_contexts_by_order,
+            call_contexts_by_callee,
+        ) = extract_call_contexts(functions)
+        call_seq_map = {}
+        ctx_hits = 0
+        ctx_pair_hits = 0
+        ctx_order_hits = 0
+        ctx_callee_hits = 0
+        ctx_misses = 0
+        callee_ctx_index = {}
+
+        def _get_call_ctx(call_addr: int, callee_start: int, caller_ea: int, seq_order: int) -> dict:
+            nonlocal ctx_hits, ctx_pair_hits, ctx_order_hits, ctx_callee_hits, ctx_misses
+            call_ctx = call_contexts_by_addr.get(call_addr)
+            if call_ctx:
+                ctx_hits += 1
+                return call_ctx
+            call_ctx = call_contexts_by_pair.get((caller_ea, callee_start))
+            if call_ctx:
+                ctx_pair_hits += 1
+                return call_ctx
+            call_ctx = call_contexts_by_order.get((caller_ea, seq_order))
+            if call_ctx:
+                ctx_order_hits += 1
+                return call_ctx
+            callee_key = (caller_ea, callee_start)
+            callee_list = call_contexts_by_callee.get(callee_key)
+            if callee_list:
+                idx = callee_ctx_index.get(callee_key, 0)
+                if idx < len(callee_list):
+                    callee_ctx_index[callee_key] = idx + 1
+                    ctx_callee_hits += 1
+                    return callee_list[idx]
+            ctx_misses += 1
+            return {}
 
         for func in functions:
             func_obj = ida_funcs.get_func(func.ea)
@@ -225,12 +264,22 @@ class ExtractionEngine:
                         continue
                     seen.add(key)
 
+                    seq_order = call_seq_map.get(func.ea, 0)
+                    call_seq_map[func.ea] = seq_order + 1
+                    call_ctx = _get_call_ctx(head, callee_start, func.ea, seq_order)
+
                     calls.append(
                         RawCall(
                             caller_ea=func.ea,
                             callee_ea=callee_start,
                             call_addr=head,
                             call_type=self._detect_call_type(head),
+                            seq_order=seq_order,
+                            in_condition=call_ctx.get("in_condition", False),
+                            in_loop=call_ctx.get("in_loop", False),
+                            const_args=call_ctx.get("const_args", {}),
+                            return_used=call_ctx.get("return_used", False),
+                            return_in_condition=call_ctx.get("return_in_condition", False),
                         )
                     )
 
@@ -242,15 +291,35 @@ class ExtractionEngine:
                             key = (func.ea, target_ea, head)
                             if key not in seen:
                                 seen.add(key)
+                                seq_order = call_seq_map.get(func.ea, 0)
+                                call_seq_map[func.ea] = seq_order + 1
+                                call_ctx = _get_call_ctx(head, target_ea, func.ea, seq_order)
                                 calls.append(
                                     RawCall(
                                         caller_ea=func.ea,
                                         callee_ea=target_ea,
                                         call_addr=head,
                                         call_type=self._detect_call_type(head),
+                                        seq_order=seq_order,
+                                        in_condition=call_ctx.get("in_condition", False),
+                                        in_loop=call_ctx.get("in_loop", False),
+                                        const_args=call_ctx.get("const_args", {}),
+                                        return_used=call_ctx.get("return_used", False),
+                                        return_in_condition=call_ctx.get("return_in_condition", False),
                                     )
                                 )
 
+        total_ctx = ctx_hits + ctx_pair_hits + ctx_order_hits + ctx_callee_hits + ctx_misses
+        if total_ctx:
+            logger.info(
+                "Call context match: addr_hits=%d, pair_hits=%d, order_hits=%d, callee_hits=%d, miss=%d, total=%d",
+                ctx_hits,
+                ctx_pair_hits,
+                ctx_order_hits,
+                ctx_callee_hits,
+                ctx_misses,
+                total_ctx,
+            )
         return calls
 
     def extract_string_refs(self, functions: List[RawFunction]) -> List[RawStringRef]:
