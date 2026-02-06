@@ -16,7 +16,6 @@ keywords = ["binary-analysis", "reverse-engineering", "neo4j", "ida-pro", "graph
 
 [project.scripts]
 ida-graphy = "ida_graphy:main"
-ida-export = "ida_graphy:main"
 
 [project.optional-dependencies]
 dev = [
