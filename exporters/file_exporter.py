@@ -60,6 +60,8 @@ class FileExporter:
         self.output_dir = output_dir
         self.graph_data = graph_data
         self.binary_name = binary_name or "default"
+        self._callers_map: Optional[Dict[str, List[str]]] = None
+        self._callees_map: Optional[Dict[str, List[str]]] = None
         
         # Create export directories with binary-specific subdirectory
         self.exports_dir = os.path.join(output_dir, 'exports', self.binary_name)
@@ -162,6 +164,8 @@ class FileExporter:
         
         imagebase = ida_nalt.get_imagebase()
         
+        self._prepare_call_indexes()
+
         for func_node in self.graph_data.functions:
             func_ea = imagebase + func_node.rva
             
@@ -178,7 +182,7 @@ class FileExporter:
                 # Compute hash for caching/change detection
                 pseudocode_hash = hashlib.sha256(pseudocode.encode('utf-8')).hexdigest()
                 
-                # Get callers and callees from graph data
+                # Get callers and callees from indexed graph data
                 callers = self._get_callers_from_graph(func_node.uid)
                 callees = self._get_callees_from_graph(func_node.uid)
                 
@@ -196,6 +200,17 @@ class FileExporter:
                 filename = f"{func_node.uid}_{safe_name}.c"
                 filepath = os.path.join(self.decompile_dir, filename)
                 
+                # Skip writing if content has not changed
+                content_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
+                if self._file_hash_matches(filepath, content_hash):
+                    relative_path = os.path.relpath(filepath, self.output_dir).replace('\\', '/')
+                    file_mapping[func_node.uid] = {
+                        'path': relative_path,
+                        'hash': pseudocode_hash
+                    }
+                    success_count += 1
+                    continue
+
                 # Write to file
                 with open(filepath, 'w', encoding='utf-8') as f:
                     f.write(content)
@@ -236,58 +251,60 @@ class FileExporter:
         failed_items = []
         success_count = 0
         
-        all_structs_content = []
+        summary_path = os.path.join(self.struct_dir, '_all_structures.txt')
+        summary_file = None
         
         try:
             # Get type information library
             til = ida_typeinf.get_idati()
             
-            # Iterate through all named types (IDA 9.x API)
-            for tif in til.named_types():
-                # Check if it's a structure or union
-                if not (tif.is_struct() or tif.is_union()):
-                    continue
-                
-                # Get type name
-                type_name = str(tif)
-                if not type_name:
-                    continue
-                
-                try:
-                    # Get structure definition
-                    struct_def = self._format_structure_definition(tif, type_name)
+            try:
+                # Iterate through all named types (IDA 9.x API)
+                for tif in til.named_types():
+                    # Check if it's a structure or union
+                    if not (tif.is_struct() or tif.is_union()):
+                        continue
                     
-                    if struct_def:
-                        # Write individual .h file
-                        safe_name = self._sanitize_filename(type_name)
-                        filename = f"{safe_name}.h"
-                        filepath = os.path.join(self.struct_dir, filename)
+                    # Get type name
+                    type_name = str(tif)
+                    if not type_name:
+                        continue
+                    
+                    try:
+                        # Get structure definition
+                        struct_def = self._format_structure_definition(tif, type_name)
                         
-                        with open(filepath, 'w', encoding='utf-8') as f:
-                            f.write(struct_def)
-                        
-                        # Add to summary
-                        all_structs_content.append(struct_def)
-                        
-                        relative_path = os.path.relpath(filepath, self.output_dir).replace('\\', '/')
-                        file_mapping[type_name] = {
-                            'path': relative_path,
-                            'hash': hashlib.sha256(struct_def.encode('utf-8')).hexdigest()
-                        }
-                        
-                        success_count += 1
-                
-                except Exception as e:
-                    failed_items.append((type_name, str(e)))
-            
-            # Write summary file
-            if all_structs_content:
-                summary_path = os.path.join(self.struct_dir, '_all_structures.txt')
-                with open(summary_path, 'w', encoding='utf-8') as f:
-                    f.write("=" * 80 + "\n")
-                    f.write("All Structure Definitions\n")
-                    f.write("=" * 80 + "\n\n")
-                    f.write("\n\n".join(all_structs_content))
+                        if struct_def:
+                            # Write individual .h file
+                            safe_name = self._sanitize_filename(type_name)
+                            filename = f"{safe_name}.h"
+                            filepath = os.path.join(self.struct_dir, filename)
+                            
+                            with open(filepath, 'w', encoding='utf-8') as f:
+                                f.write(struct_def)
+                            
+                            if summary_file is None:
+                                summary_file = open(summary_path, 'w', encoding='utf-8')
+                                summary_file.write("=" * 80 + "\n")
+                                summary_file.write("All Structure Definitions\n")
+                                summary_file.write("=" * 80 + "\n\n")
+                            
+                            summary_file.write(struct_def)
+                            summary_file.write("\n\n")
+                            
+                            relative_path = os.path.relpath(filepath, self.output_dir).replace('\\', '/')
+                            file_mapping[type_name] = {
+                                'path': relative_path,
+                                'hash': hashlib.sha256(struct_def.encode('utf-8')).hexdigest()
+                            }
+                            
+                            success_count += 1
+                    
+                    except Exception as e:
+                        failed_items.append((type_name, str(e)))
+            finally:
+                if summary_file is not None:
+                    summary_file.close()
         
         except Exception as e:
             logger.error(f"Failed to export structures: {e}")
@@ -415,6 +432,8 @@ class FileExporter:
     
     def _get_callers_from_graph(self, func_uid: str) -> List[str]:
         """Get caller function names from CALLS edges."""
+        if self._callers_map is not None:
+            return self._callers_map.get(func_uid, [])
         callers = []
         for edge in self.graph_data.calls:
             if edge.to_id == func_uid:
@@ -427,6 +446,8 @@ class FileExporter:
     
     def _get_callees_from_graph(self, func_uid: str) -> List[str]:
         """Get callee function names from CALLS edges."""
+        if self._callees_map is not None:
+            return self._callees_map.get(func_uid, [])
         callees = []
         for edge in self.graph_data.calls:
             if edge.from_id == func_uid:
@@ -451,6 +472,41 @@ class FileExporter:
         lines.append(pseudocode)
         
         return '\n'.join(lines)
+
+    def _prepare_call_indexes(self) -> None:
+        """Build caller/callee indexes to avoid repeated scans."""
+        func_index: Dict[str, Tuple[int, str]] = {
+            func.uid: (func.rva, func.name) for func in self.graph_data.functions
+        }
+        callers_map: Dict[str, List[str]] = {}
+        callees_map: Dict[str, List[str]] = {}
+
+        for edge in self.graph_data.calls:
+            caller = func_index.get(edge.from_id)
+            callee = func_index.get(edge.to_id)
+            if not caller or not callee:
+                continue
+
+            caller_text = f"0x{caller[0]:x} ({caller[1]})"
+            callee_text = f"0x{callee[0]:x} ({callee[1]})"
+
+            callers_map.setdefault(edge.to_id, []).append(caller_text)
+            callees_map.setdefault(edge.from_id, []).append(callee_text)
+
+        self._callers_map = callers_map
+        self._callees_map = callees_map
+
+    def _file_hash_matches(self, filepath: str, expected_hash: str) -> bool:
+        """Check whether a file exists and its content hash matches expected."""
+        try:
+            with open(filepath, 'rb') as f:
+                data = f.read()
+            return hashlib.sha256(data).hexdigest() == expected_hash
+        except FileNotFoundError:
+            return False
+        except Exception as e:
+            logger.debug(f"Failed to read {filepath} for hash check: {e}")
+            return False
     
     def _format_structure_definition(self, tif: Any, type_name: str) -> Optional[str]:
         """Format structure definition as C header using IDA 9.x generator API."""

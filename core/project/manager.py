@@ -72,8 +72,8 @@ class ProjectManager:
         config: Optional[Dict] = None,
     ) -> ProjectMetadata:
         """创建新项目"""
-        if not project_name or not project_name.replace("_", "").replace("-", "").isalnum():
-            raise ProjectError("项目名称只能包含字母、数字、下划线和连字符")
+        if not project_name or not project_name.replace("-", "").replace(".", "").isalnum():
+            raise ProjectError("项目名称只能包含字母、数字、点和连字符")
 
         project_dir = self._get_project_dir(project_name)
         if project_dir.exists():

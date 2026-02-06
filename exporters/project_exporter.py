@@ -35,7 +35,7 @@ class ProjectExportError(Exception):
 class ProjectExporter:
     """项目数据导出器，支持直接Neo4j导出"""
     
-    def __init__(self, neo4j_config: Optional[Dict] = None):
+    def __init__(self, neo4j_config: Optional[Dict] = None, import_config: Optional[Dict] = None):
         """
         初始化项目导出器
         
@@ -43,6 +43,7 @@ class ProjectExporter:
             neo4j_config: Neo4j连接配置字典，包含uri、user、password等
         """
         self.neo4j_config = neo4j_config
+        self.import_config = import_config or {}
         self._neo4j_manager = None
         
     @property
@@ -61,6 +62,14 @@ class ProjectExporter:
                 logger.error(f"无法创建Neo4j管理器: {e}")
                 
         return self._neo4j_manager
+
+    def _get_batch_size(self) -> int:
+        raw_value = self.import_config.get("batch_size", 100000)
+        try:
+            batch_size = int(raw_value)
+        except (TypeError, ValueError):
+            batch_size = 100000
+        return max(1, batch_size)
     
     def export_to_neo4j(self, project_metadata: ProjectMetadata, 
                        graph_data: GraphData, 
@@ -99,7 +108,11 @@ class ProjectExporter:
             self.neo4j_manager.create_indexes(database_name)
             
             # 导入图数据
-            stats = self.neo4j_manager.import_graph_data(database_name, graph_data)
+            stats = self.neo4j_manager.import_graph_data(
+                database_name,
+                graph_data,
+                batch_size=self._get_batch_size(),
+            )
             
             logger.info(f"项目 '{project_metadata.name}' 数据导入完成: {stats}")
             return stats
@@ -172,7 +185,11 @@ class ProjectExporter:
                 self.neo4j_manager.create_indexes(database_name)
                 
                 # 首次创建，不需要增量处理
-                import_stats = self.neo4j_manager.import_graph_data(database_name, graph_data)
+                import_stats = self.neo4j_manager.import_graph_data(
+                    database_name,
+                    graph_data,
+                    batch_size=self._get_batch_size(),
+                )
                 total_stats.update(import_stats)
                 gc_stats = self.neo4j_manager.gc_orphan_nodes(database_name)
                 total_stats['nodes_deleted'] += gc_stats.get('nodes_deleted', 0)
@@ -182,7 +199,11 @@ class ProjectExporter:
             
             if changed_binaries:
                 # 增量更新：先导入新数据，再移除旧二进制
-                import_stats = self.neo4j_manager.import_graph_data(database_name, graph_data)
+                import_stats = self.neo4j_manager.import_graph_data(
+                    database_name,
+                    graph_data,
+                    batch_size=self._get_batch_size(),
+                )
                 total_stats.update(import_stats)
 
                 for binary_hash in changed_binaries:
@@ -200,7 +221,11 @@ class ProjectExporter:
                 self.neo4j_manager.clear_database(database_name)
                 self.neo4j_manager.create_indexes(database_name)
                 
-                import_stats = self.neo4j_manager.import_graph_data(database_name, graph_data)
+                import_stats = self.neo4j_manager.import_graph_data(
+                    database_name,
+                    graph_data,
+                    batch_size=self._get_batch_size(),
+                )
                 total_stats.update(import_stats)
                 gc_stats = self.neo4j_manager.gc_orphan_nodes(database_name)
                 total_stats['nodes_deleted'] += gc_stats.get('nodes_deleted', 0)
@@ -285,9 +310,10 @@ def create_project_exporter(config: Dict) -> ProjectExporter:
         配置好的ProjectExporter实例
     """
     neo4j_config = config.get('neo4j', {}).get('connection', {})
+    import_config = config.get("neo4j", {}).get("import", {})
     
     if not neo4j_config.get('uri'):
         logger.warning("Neo4j配置不完整，无法导出")
         return ProjectExporter()
     
-    return ProjectExporter(neo4j_config)
+    return ProjectExporter(neo4j_config, import_config)

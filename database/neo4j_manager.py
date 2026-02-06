@@ -317,7 +317,12 @@ class Neo4jManager:
         except Exception as e:
             raise Neo4jError(f"创建索引失败: {e}")
     
-    def import_graph_data(self, database_name: str, graph_data: GraphData) -> Dict[str, int]:
+    def import_graph_data(
+        self,
+        database_name: str,
+        graph_data: GraphData,
+        batch_size: int = 100000,
+    ) -> Dict[str, int]:
         """
         将图数据导入数据库
         
@@ -338,106 +343,182 @@ class Neo4jManager:
             'error_count': 0
         }
         
+        batch_size = self._normalize_batch_size(batch_size)
+
         try:
             with self.get_session(database_name) as session:
-                with session.begin_transaction() as tx:
-                    # 导入节点
-                    stats['nodes_created'] += self._import_nodes(tx, graph_data)
-                    
-                    # 导入关系
-                    stats['relationships_created'] += self._import_relationships(tx, graph_data)
-                    
-                    logger.info(f"图数据导入完成: {stats}")
-                    return stats
-                    
+                # 导入节点
+                if graph_data.binaries:
+                    total_batches = self._count_batches(len(graph_data.binaries), batch_size)
+                    for index, batch in self._iter_batches(graph_data.binaries, batch_size):
+                        logger.info("导入Binary节点批次 %s/%s (size=%s)", index, total_batches, len(batch))
+                        with session.begin_transaction() as tx:
+                            stats['nodes_created'] += self._import_binary_nodes(tx, batch)
+
+                if graph_data.functions:
+                    total_batches = self._count_batches(len(graph_data.functions), batch_size)
+                    for index, batch in self._iter_batches(graph_data.functions, batch_size):
+                        logger.info("导入Function节点批次 %s/%s (size=%s)", index, total_batches, len(batch))
+                        with session.begin_transaction() as tx:
+                            stats['nodes_created'] += self._import_function_nodes(tx, batch)
+
+                if graph_data.dataslots:
+                    total_batches = self._count_batches(len(graph_data.dataslots), batch_size)
+                    for index, batch in self._iter_batches(graph_data.dataslots, batch_size):
+                        logger.info("导入DataSlot节点批次 %s/%s (size=%s)", index, total_batches, len(batch))
+                        with session.begin_transaction() as tx:
+                            stats['nodes_created'] += self._import_dataslot_nodes(tx, batch)
+
+                if graph_data.strings:
+                    total_batches = self._count_batches(len(graph_data.strings), batch_size)
+                    for index, batch in self._iter_batches(graph_data.strings, batch_size):
+                        logger.info("导入String节点批次 %s/%s (size=%s)", index, total_batches, len(batch))
+                        with session.begin_transaction() as tx:
+                            stats['nodes_created'] += self._import_string_nodes(tx, batch)
+
+                if graph_data.links_to:
+                    with session.begin_transaction() as tx:
+                        tx.run("MATCH ()-[r:LINKS_TO]->() DELETE r")
+                        tx.run("MATCH (f:Function {binary_id: 'EXTERNAL'}) DETACH DELETE f")
+
+                # 导入关系
+                if graph_data.contains:
+                    total_batches = self._count_batches(len(graph_data.contains), batch_size)
+                    for index, batch in self._iter_batches(graph_data.contains, batch_size):
+                        logger.info("导入CONTAINS关系批次 %s/%s (size=%s)", index, total_batches, len(batch))
+                        with session.begin_transaction() as tx:
+                            stats['relationships_created'] += self._import_contains_edges(tx, batch)
+
+                if graph_data.embeds:
+                    total_batches = self._count_batches(len(graph_data.embeds), batch_size)
+                    for index, batch in self._iter_batches(graph_data.embeds, batch_size):
+                        logger.info("导入EMBEDS关系批次 %s/%s (size=%s)", index, total_batches, len(batch))
+                        with session.begin_transaction() as tx:
+                            stats['relationships_created'] += self._import_embeds_edges(tx, batch)
+
+                if graph_data.calls:
+                    total_batches = self._count_batches(len(graph_data.calls), batch_size)
+                    for index, batch in self._iter_batches(graph_data.calls, batch_size):
+                        logger.info("导入CALLS关系批次 %s/%s (size=%s)", index, total_batches, len(batch))
+                        with session.begin_transaction() as tx:
+                            stats['relationships_created'] += self._import_calls_edges(tx, batch)
+
+                if graph_data.links_to:
+                    total_batches = self._count_batches(len(graph_data.links_to), batch_size)
+                    for index, batch in self._iter_batches(graph_data.links_to, batch_size):
+                        logger.info("导入LINKS_TO关系批次 %s/%s (size=%s)", index, total_batches, len(batch))
+                        with session.begin_transaction() as tx:
+                            stats['relationships_created'] += self._import_links_to_edges(tx, batch)
+
+                if graph_data.references:
+                    total_batches = self._count_batches(len(graph_data.references), batch_size)
+                    for index, batch in self._iter_batches(graph_data.references, batch_size):
+                        logger.info("导入REFERENCES关系批次 %s/%s (size=%s)", index, total_batches, len(batch))
+                        with session.begin_transaction() as tx:
+                            stats['relationships_created'] += self._import_references_edges(tx, batch)
+
+                if graph_data.writes:
+                    total_batches = self._count_batches(len(graph_data.writes), batch_size)
+                    for index, batch in self._iter_batches(graph_data.writes, batch_size):
+                        logger.info("导入WRITES关系批次 %s/%s (size=%s)", index, total_batches, len(batch))
+                        with session.begin_transaction() as tx:
+                            stats['relationships_created'] += self._import_writes_edges(tx, batch)
+
+                if graph_data.reads:
+                    total_batches = self._count_batches(len(graph_data.reads), batch_size)
+                    for index, batch in self._iter_batches(graph_data.reads, batch_size):
+                        logger.info("导入READS关系批次 %s/%s (size=%s)", index, total_batches, len(batch))
+                        with session.begin_transaction() as tx:
+                            stats['relationships_created'] += self._import_reads_edges(tx, batch)
+
+                logger.info("图数据导入完成: %s", stats)
+                return stats
+
         except Exception as e:
             stats['error_count'] += 1
             logger.error(f"导入图数据失败: {e}")
             raise Neo4jError(f"导入图数据失败: {e}")
     
-    def _import_nodes(self, tx: Transaction, graph_data: GraphData) -> int:
-        """导入节点数据"""
-        total_created = 0
-        
-        # 导入Binary节点
-        if graph_data.binaries:
-            for binary in graph_data.binaries:
-                tx.run("""
-                    MERGE (b:Binary {hash: $hash})
-                    SET b.name = $name,
-                        b.orig_name = $orig_name,
-                        b.base_addr = $base_addr,
-                        b.arch = $arch,
-                        b.compile_ts = $compile_ts
-                """, binary.to_dict())
-            total_created += len(graph_data.binaries)
-        
-        # 导入Function节点
-        if graph_data.functions:
-            for function in graph_data.functions:
-                tx.run("""
-                    MERGE (f:Function {uid: $uid})
-                    SET f.rva = $rva,
-                        f.name = $name,
-                        f.orig_name = $orig_name,
-                        f.size = $size,
-                        f.is_lib = $is_lib,
-                        f.func_type = $func_type,
-                        f.signature = $signature,
-                        f.complexity = $complexity,
-                        f.binary_id = $binary_id,
-                        f.binary_name = $binary_name,
-                        f.decompiled_file = $decompiled_file,
-                        f.pseudocode_hash = $pseudocode_hash
-                """, function.to_dict())
-            total_created += len(graph_data.functions)
-        
-        # 导入DataSlot节点
-        if graph_data.dataslots:
-            for dataslot in graph_data.dataslots:
-                tx.run("""
-                    MERGE (d:DataSlot {uid: $uid})
-                    SET d.base_type = $base_type,
-                        d.base_type_orig = $base_type_orig,
-                        d.offset = $offset,
-                        d.size = $size,
-                        d.name = $name,
-                        d.orig_name = $orig_name,
-                        d.is_global = $is_global,
-                        d.struct_file = $struct_file
-                """, dataslot.to_dict())
-            total_created += len(graph_data.dataslots)
-        
-        # 导入String节点
-        if graph_data.strings:
-            for string in graph_data.strings:
-                tx.run("""
-                    MERGE (s:String {hash: $hash})
-                    SET s.content = $content,
-                        s.orig_name = $orig_name,
-                        s.encoding = $encoding
-                """, string.to_dict())
-            total_created += len(graph_data.strings)
-        
-        return total_created
-    
-    def _import_relationships(self, tx: Transaction, graph_data: GraphData) -> int:
-        """导入关系数据"""
-        total_created = 0
+    @staticmethod
+    def _normalize_batch_size(batch_size: Optional[int]) -> int:
+        try:
+            normalized = int(batch_size)
+        except (TypeError, ValueError):
+            normalized = 100000
+        return max(1, normalized)
 
-        if graph_data.links_to:
-            # Reset external export placeholders and stale LINKS_TO edges before reimport.
-            tx.run("MATCH ()-[r:LINKS_TO]->() DELETE r")
-            tx.run("MATCH (f:Function {binary_id: 'EXTERNAL'}) DETACH DELETE f")
-        
-        # CONTAINS关系 - 需要正确处理不同节点类型的ID属性
-        for edge in graph_data.contains:
-            # Binary节点使用hash作为ID，目标节点使用不同的ID字段：
-            # - Function和DataSlot使用uid
-            # - String使用hash
+    @staticmethod
+    def _count_batches(total: int, batch_size: int) -> int:
+        return (total + batch_size - 1) // batch_size
+
+    @staticmethod
+    def _iter_batches(items: List[Any], batch_size: int):
+        for index in range(0, len(items), batch_size):
+            batch_index = (index // batch_size) + 1
+            yield batch_index, items[index:index + batch_size]
+
+    def _import_binary_nodes(self, tx: Transaction, binaries: List[BinaryNode]) -> int:
+        for binary in binaries:
+            tx.run("""
+                MERGE (b:Binary {hash: $hash})
+                SET b.name = $name,
+                    b.orig_name = $orig_name,
+                    b.base_addr = $base_addr,
+                    b.arch = $arch,
+                    b.compile_ts = $compile_ts
+            """, binary.to_dict())
+        return len(binaries)
+
+    def _import_function_nodes(self, tx: Transaction, functions: List[FunctionNode]) -> int:
+        for function in functions:
+            tx.run("""
+                MERGE (f:Function {uid: $uid})
+                SET f.rva = $rva,
+                    f.name = $name,
+                    f.orig_name = $orig_name,
+                    f.size = $size,
+                    f.is_lib = $is_lib,
+                    f.func_type = $func_type,
+                    f.signature = $signature,
+                    f.complexity = $complexity,
+                    f.binary_id = $binary_id,
+                    f.binary_name = $binary_name,
+                    f.decompiled_file = $decompiled_file,
+                    f.pseudocode_hash = $pseudocode_hash
+            """, function.to_dict())
+        return len(functions)
+
+    def _import_dataslot_nodes(self, tx: Transaction, dataslots: List[DataSlotNode]) -> int:
+        for dataslot in dataslots:
+            tx.run("""
+                MERGE (d:DataSlot {uid: $uid})
+                SET d.base_type = $base_type,
+                    d.base_type_orig = $base_type_orig,
+                    d.offset = $offset,
+                    d.size = $size,
+                    d.name = $name,
+                    d.orig_name = $orig_name,
+                    d.is_global = $is_global,
+                    d.struct_file = $struct_file
+            """, dataslot.to_dict())
+        return len(dataslots)
+
+    def _import_string_nodes(self, tx: Transaction, strings: List[StringNode]) -> int:
+        for string in strings:
+            tx.run("""
+                MERGE (s:String {hash: $hash})
+                SET s.content = $content,
+                    s.orig_name = $orig_name,
+                    s.encoding = $encoding
+            """, string.to_dict())
+        return len(strings)
+
+    def _import_contains_edges(self, tx: Transaction, edges: List[Any]) -> int:
+        total_created = 0
+        for edge in edges:
             result = tx.run("""
                 MATCH (from:Binary {hash: $from_id})
-                OPTIONAL MATCH (func:Function {uid: $to_id})  
+                OPTIONAL MATCH (func:Function {uid: $to_id})
                 OPTIONAL MATCH (data:DataSlot {uid: $to_id})
                 OPTIONAL MATCH (str:String {hash: $to_id})
                 WITH from, COALESCE(func, data, str) as target
@@ -445,16 +526,16 @@ class Neo4jManager:
                 MERGE (from)-[:CONTAINS]->(target)
                 RETURN count(*) as created
             """, edge.to_dict())
-            
-            # 记录创建的关系数
+
             record = result.single()
             if record and record['created'] > 0:
                 total_created += record['created']
-        
-        logger.info(f"CONTAINS关系导入完成，创建了 {total_created} 个关系")
 
-        # EMBEDS关系
-        for edge in graph_data.embeds:
+        return total_created
+
+    def _import_embeds_edges(self, tx: Transaction, edges: List[Any]) -> int:
+        total_created = 0
+        for edge in edges:
             result = tx.run("""
                 MATCH (from:DataSlot {uid: $from_id}), (to:DataSlot {uid: $to_id})
                 MERGE (from)-[:EMBEDS]->(to)
@@ -463,9 +544,11 @@ class Neo4jManager:
             record = result.single()
             if record and record['created'] > 0:
                 total_created += record['created']
-        
-        # CALLS关系
-        for edge in graph_data.calls:
+        return total_created
+
+    def _import_calls_edges(self, tx: Transaction, edges: List[Any]) -> int:
+        total_created = 0
+        for edge in edges:
             result = tx.run("""
                 MATCH (from:Function {uid: $from_id}), (to:Function {uid: $to_id})
                 MERGE (from)-[r:CALLS {loc: $loc, seq_order: $seq_order}]->(to)
@@ -482,9 +565,11 @@ class Neo4jManager:
             record = result.single()
             if record and record['created'] > 0:
                 total_created += record['created']
-        
-        # LINKS_TO关系
-        for edge in graph_data.links_to:
+        return total_created
+
+    def _import_links_to_edges(self, tx: Transaction, edges: List[Any]) -> int:
+        total_created = 0
+        for edge in edges:
             result = tx.run("""
                 MERGE (from:Function {uid: $from_id})
                 ON CREATE SET from.func_type = 'IMPORT'
@@ -500,9 +585,11 @@ class Neo4jManager:
             record = result.single()
             if record and record['created'] > 0:
                 total_created += record['created']
-        
-        # REFERENCES关系
-        for edge in graph_data.references:
+        return total_created
+
+    def _import_references_edges(self, tx: Transaction, edges: List[Any]) -> int:
+        total_created = 0
+        for edge in edges:
             result = tx.run("""
                 MATCH (from:Function {uid: $from_id}), (to:String {hash: $to_id})
                 MERGE (from)-[:REFERENCES]->(to)
@@ -511,9 +598,11 @@ class Neo4jManager:
             record = result.single()
             if record and record['created'] > 0:
                 total_created += record['created']
-        
-        # WRITES关系
-        for edge in graph_data.writes:
+        return total_created
+
+    def _import_writes_edges(self, tx: Transaction, edges: List[Any]) -> int:
+        total_created = 0
+        for edge in edges:
             result = tx.run("""
                 MATCH (from:Function {uid: $from_id}), (to:DataSlot {uid: $to_id})
                 MERGE (from)-[r:WRITES]->(to)
@@ -523,9 +612,11 @@ class Neo4jManager:
             record = result.single()
             if record and record['created'] > 0:
                 total_created += record['created']
-        
-        # READS关系
-        for edge in graph_data.reads:
+        return total_created
+
+    def _import_reads_edges(self, tx: Transaction, edges: List[Any]) -> int:
+        total_created = 0
+        for edge in edges:
             result = tx.run("""
                 MATCH (from:Function {uid: $from_id}), (to:DataSlot {uid: $to_id})
                 MERGE (from)-[r:READS]->(to)
@@ -536,8 +627,6 @@ class Neo4jManager:
             record = result.single()
             if record and record['created'] > 0:
                 total_created += record['created']
-        
-        logger.info(f"所有关系导入完成，总共创建了 {total_created} 个关系")
         return total_created
     
     def remove_binary_data(self, database_name: str, binary_hash: str) -> Dict[str, int]:

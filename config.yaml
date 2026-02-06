@@ -34,6 +34,11 @@ neo4j:
     # Connection pool settings
     max_connection_pool_size: 50
     connection_timeout: 30.0
+
+  # Import settings
+  import:
+    # Batch size per transaction during Neo4j import
+    batch_size: 100000
   
   # Project database settings
   projects:
