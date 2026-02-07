@@ -1,6 +1,7 @@
 """Cross-binary symbol resolver for LINKS_TO edges."""
 
 import logging
+import re
 from typing import Dict, List, Tuple, Optional
 
 from core.models import LinksToEdge, FunctionNode
@@ -16,9 +17,22 @@ class SymbolResolver:
         self.resolved_count = 0
         self.unresolved_count = 0
 
+    @staticmethod
+    def _has_binary_extension(name: str) -> bool:
+        """Check whether *name* already carries a known binary extension."""
+        lower = name.lower()
+        return (
+            lower.endswith(".dll")
+            or lower.endswith(".exe")
+            or lower.endswith(".sys")
+            or lower.endswith(".drv")
+            or lower.endswith(".dylib")
+            or ".so" in lower  # covers .so, .so.6, etc.
+        )
+
     def build_export_table(self, functions: List[FunctionNode], binary_name: str) -> None:
         dll_name = binary_name.lower()
-        if not dll_name.endswith(".dll") and not dll_name.endswith(".exe"):
+        if not self._has_binary_extension(dll_name):
             dll_name = dll_name + ".dll"
 
         export_count = 0
@@ -91,6 +105,17 @@ class SymbolResolver:
             variants.append(lower_name.replace(".dll", ""))
         elif lower_name.endswith(".exe"):
             variants.append(lower_name.replace(".exe", ""))
+        elif ".so" in lower_name:
+            # ELF shared library: libc.so.6 → libc.so → libc
+            m = re.match(r'(.+\.so)(\.\d+)*$', lower_name)
+            if m:
+                variants.append(m.group(1))             # libc.so
+                variants.append(m.group(1).rsplit('.so', 1)[0])  # libc
+            else:
+                variants.append(lower_name.rsplit('.so', 1)[0])
+        elif lower_name.endswith(".dylib"):
+            variants.append(lower_name.replace(".dylib", ""))
+            variants.append(lower_name.replace(".dylib", ".so"))
         else:
             variants.append(lower_name + ".dll")
 

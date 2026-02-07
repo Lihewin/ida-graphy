@@ -104,7 +104,15 @@ class RawImport:
 
 @dataclass
 class RawDataAccess:
-    """Data access (READS/WRITES) raw data."""
+    """Data access (READS/WRITES) raw data.
+
+    For global variable accesses, ``target_ea`` is set to the absolute address
+    of the variable and ``struct_name`` / ``member_offset`` are ``None``.
+
+    For structure member accesses (identified via Hex-Rays ctree), ``struct_name``
+    and ``member_offset`` carry the raw IDA type name and byte offset respectively,
+    while ``target_ea`` is set to 0 (meaningless in that case).
+    """
 
     func_ea: int
     target_ea: int
@@ -113,6 +121,8 @@ class RawDataAccess:
     const_val: Optional[str] = None
     is_condition: bool = False
     loc: int = 0
+    struct_name: Optional[str] = None
+    member_offset: Optional[int] = None
 
 
 @dataclass

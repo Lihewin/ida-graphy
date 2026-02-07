@@ -5,7 +5,8 @@ Collects raw DTOs from IDA without generating graph IDs.
 
 import logging
 import os
-from typing import List, Optional
+import struct as _struct
+from typing import Dict, List, Optional
 
 from .raw_data import (
     RawBinaryData,
@@ -20,6 +21,7 @@ from .raw_data import (
     RawDataAccess,
 )
 from .call_analyzer import extract_call_contexts
+from .dataflow import extract_dataflow_with_hexrays
 
 try:
     import ida_funcs
@@ -38,6 +40,195 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Standalone ELF file parser  (no IDA dependency — reads raw bytes from disk)
+# ---------------------------------------------------------------------------
+
+def _parse_elf_verneed(elf_path: str) -> Dict[str, str]:
+    """Parse ``.gnu.version_r`` from an ELF file on disk.
+
+    Returns ``{version_tag: library_filename}``, e.g.::
+
+        {"GLIBC_2.3.4": "libc.so.6", "OPENSSL_1_1_0": "libssl.so.1.1"}
+    """
+    tag_map, _ = _parse_elf_import_maps(elf_path)
+    return tag_map
+
+
+def _parse_elf_import_maps(elf_path: str):
+    """Parse ELF to build comprehensive import resolution maps.
+
+    Returns ``(tag_to_lib, sym_to_lib)``:
+
+    - ``tag_to_lib``: ``{version_tag: lib_name}`` from ``.gnu.version_r``
+    - ``sym_to_lib``: ``{symbol_name: lib_name}`` by cross-referencing
+      ``.dynsym``, ``.gnu.version``, and ``.gnu.version_r``
+
+    This resolves ALL dynamic imports including those **without**
+    ``@@VERSION_TAG`` annotations (e.g. zlib, libaudit, libselinux).
+    """
+    SHT_STRTAB = 3
+    SHT_DYNSYM = 11
+    SHT_GNU_VERSYM = 0x6FFFFFFF
+    SHT_GNU_VERNEED = 0x6FFFFFFE
+
+    tag_to_lib: Dict[str, str] = {}
+    sym_to_lib: Dict[str, str] = {}
+
+    try:
+        with open(elf_path, "rb") as f:
+            data = f.read()
+    except Exception:
+        return tag_to_lib, sym_to_lib
+
+    if len(data) < 64 or data[:4] != b"\x7fELF":
+        return tag_to_lib, sym_to_lib
+
+    is_64 = data[4] == 2
+    is_le = data[5] == 1
+    endian = "<" if is_le else ">"
+
+    if is_64:
+        e_shoff = _struct.unpack_from(f"{endian}Q", data, 40)[0]
+        e_shentsize = _struct.unpack_from(f"{endian}H", data, 58)[0]
+        e_shnum = _struct.unpack_from(f"{endian}H", data, 60)[0]
+    else:
+        e_shoff = _struct.unpack_from(f"{endian}I", data, 32)[0]
+        e_shentsize = _struct.unpack_from(f"{endian}H", data, 46)[0]
+        e_shnum = _struct.unpack_from(f"{endian}H", data, 48)[0]
+
+    if e_shoff == 0 or e_shnum == 0:
+        return tag_to_lib, sym_to_lib
+
+    def _read_sh(idx: int):
+        """Return (sh_name, sh_type, sh_offset, sh_size, sh_link, sh_entsize, sh_info)."""
+        off = e_shoff + idx * e_shentsize
+        if is_64:
+            sh_name = _struct.unpack_from(f"{endian}I", data, off)[0]
+            sh_type = _struct.unpack_from(f"{endian}I", data, off + 4)[0]
+            sh_offset = _struct.unpack_from(f"{endian}Q", data, off + 24)[0]
+            sh_size = _struct.unpack_from(f"{endian}Q", data, off + 32)[0]
+            sh_link = _struct.unpack_from(f"{endian}I", data, off + 40)[0]
+            sh_info = _struct.unpack_from(f"{endian}I", data, off + 44)[0]
+            sh_entsize = _struct.unpack_from(f"{endian}Q", data, off + 56)[0]
+        else:
+            sh_name = _struct.unpack_from(f"{endian}I", data, off)[0]
+            sh_type = _struct.unpack_from(f"{endian}I", data, off + 4)[0]
+            sh_offset = _struct.unpack_from(f"{endian}I", data, off + 16)[0]
+            sh_size = _struct.unpack_from(f"{endian}I", data, off + 20)[0]
+            sh_link = _struct.unpack_from(f"{endian}I", data, off + 24)[0]
+            sh_info = _struct.unpack_from(f"{endian}I", data, off + 28)[0]
+            sh_entsize = _struct.unpack_from(f"{endian}I", data, off + 36)[0]
+        return sh_name, sh_type, sh_offset, sh_size, sh_link, sh_entsize, sh_info
+
+    def _read_cstring(strtab_data: bytes, offset: int) -> str:
+        end = strtab_data.find(b"\x00", offset)
+        if end == -1:
+            end = len(strtab_data)
+        return strtab_data[offset:end].decode("utf-8", errors="replace")
+
+    # --- Collect all section headers by type ---
+    verneed_sh = None          # (offset, size, link)
+    versym_sh = None           # (offset, size)
+    dynsym_sh = None           # (offset, size, link, entsize)
+    strtab_sections: Dict[int, bytes] = {}  # section_idx → raw data
+
+    for i in range(e_shnum):
+        sh_name, sh_type, sh_offset, sh_size, sh_link, sh_entsize, sh_info = _read_sh(i)
+        if sh_type == SHT_GNU_VERNEED:
+            verneed_sh = (sh_offset, sh_size, sh_link)
+        elif sh_type == SHT_GNU_VERSYM:
+            versym_sh = (sh_offset, sh_size)
+        elif sh_type == SHT_DYNSYM:
+            dynsym_sh = (sh_offset, sh_size, sh_link, sh_entsize or (24 if is_64 else 16))
+        if sh_type == SHT_STRTAB:
+            strtab_sections[i] = data[sh_offset : sh_offset + sh_size]
+
+    # --- 1. Parse .gnu.version_r → tag_to_lib + idx_to_lib ---
+    idx_to_lib: Dict[int, str] = {}  # version_index → lib_name
+
+    if verneed_sh is not None:
+        vn_offset, vn_size, vn_strtab_idx = verneed_sh
+        strtab_data = strtab_sections.get(vn_strtab_idx)
+        if strtab_data is None:
+            _, _, st_off, st_sz, _, _, _ = _read_sh(vn_strtab_idx)
+            strtab_data = data[st_off : st_off + st_sz]
+
+        if strtab_data:
+            pos = vn_offset
+            vn_end = vn_offset + vn_size
+            while pos < vn_end:
+                vn_cnt = _struct.unpack_from(f"{endian}H", data, pos + 2)[0]
+                vn_file = _struct.unpack_from(f"{endian}I", data, pos + 4)[0]
+                vn_aux = _struct.unpack_from(f"{endian}I", data, pos + 8)[0]
+                vn_next = _struct.unpack_from(f"{endian}I", data, pos + 12)[0]
+
+                lib_name = _read_cstring(strtab_data, vn_file)
+
+                aux_pos = pos + vn_aux
+                for _ in range(vn_cnt):
+                    vna_flags = _struct.unpack_from(f"{endian}H", data, aux_pos + 4)[0]
+                    vna_other = _struct.unpack_from(f"{endian}H", data, aux_pos + 6)[0]
+                    vna_name_off = _struct.unpack_from(f"{endian}I", data, aux_pos + 8)[0]
+                    vna_next = _struct.unpack_from(f"{endian}I", data, aux_pos + 12)[0]
+
+                    version_tag = _read_cstring(strtab_data, vna_name_off)
+                    if version_tag and lib_name:
+                        tag_to_lib[version_tag] = lib_name
+                    if vna_other and lib_name:
+                        idx_to_lib[vna_other] = lib_name
+
+                    if vna_next == 0:
+                        break
+                    aux_pos += vna_next
+
+                if vn_next == 0:
+                    break
+                pos += vn_next
+
+    # --- 2. Parse .gnu.version + .dynsym → sym_to_lib ---
+    if versym_sh and dynsym_sh and idx_to_lib:
+        vs_offset, vs_size = versym_sh
+        ds_offset, ds_size, ds_strtab_idx, ds_entsize = dynsym_sh
+
+        dynstr_data = strtab_sections.get(ds_strtab_idx)
+        if dynstr_data is None:
+            _, _, st_off, st_sz, _, _, _ = _read_sh(ds_strtab_idx)
+            dynstr_data = data[st_off : st_off + st_sz]
+
+        if dynstr_data:
+            num_syms = ds_size // ds_entsize
+            # .gnu.version has one uint16 per .dynsym entry
+            num_vers = vs_size // 2
+
+            for i in range(min(num_syms, num_vers)):
+                # Read version index from .gnu.version
+                ver_idx = _struct.unpack_from(f"{endian}H", data, vs_offset + i * 2)[0]
+                # Mask out the hidden bit (bit 15)
+                ver_idx_clean = ver_idx & 0x7FFF
+
+                if ver_idx_clean < 2:
+                    # 0 = VER_NDX_LOCAL, 1 = VER_NDX_GLOBAL — unversioned
+                    continue
+
+                lib = idx_to_lib.get(ver_idx_clean)
+                if not lib:
+                    continue
+
+                # Read symbol name from .dynsym
+                sym_off = ds_offset + i * ds_entsize
+                if is_64:
+                    st_name = _struct.unpack_from(f"{endian}I", data, sym_off)[0]
+                else:
+                    st_name = _struct.unpack_from(f"{endian}I", data, sym_off)[0]
+
+                sym_name = _read_cstring(dynstr_data, st_name)
+                if sym_name:
+                    sym_to_lib[sym_name] = lib
+
+    return tag_to_lib, sym_to_lib
+
+
 class ExtractionEngine:
     """IDALib data extraction engine."""
 
@@ -52,6 +243,8 @@ class ExtractionEngine:
 
         self._export_set = None
         self._string_ea_set = set()
+        self._elf_tag_to_lib: Optional[Dict[str, str]] = None
+        self._elf_sym_to_lib: Optional[Dict[str, str]] = None
 
     def extract(self) -> RawBinaryData:
         """Run full extraction workflow."""
@@ -347,8 +540,25 @@ class ExtractionEngine:
         return refs
 
     def extract_imports(self) -> List[RawImport]:
-        """Extract import table entries."""
+        """Extract import table entries.
+
+        For ELF binaries, ``ida_nalt.get_import_module_name()`` returns a
+        segment name like ``.dynsym`` instead of the actual shared library
+        because ELF uses a flat dynamic symbol table.
+
+        We resolve each import to its real library by:
+        1. Parsing ``.gnu.version_r`` from the raw ELF file on disk to build
+           a ``version_tag → library_name`` map.
+        2. Extracting the ``@@VERSION_TAG`` already present in each import
+           ``name`` from IDA's callback (e.g. ``memcpy@@GLIBC_2.14``).
+        """
         imports: List[RawImport] = []
+
+        is_elf = self._is_elf()
+        ver_tag_to_lib: Dict[str, str] = {}
+        sym_to_lib: Dict[str, str] = {}
+        if is_elf:
+            ver_tag_to_lib, sym_to_lib = self._build_elf_import_maps()
 
         nimps = ida_nalt.get_import_module_qty()
         for i in range(nimps):
@@ -356,10 +566,20 @@ class ExtractionEngine:
             if not module_name:
                 continue
 
+            # For ELF, module_name is typically ".dynsym" (a section name)
+            needs_resolution = is_elf and module_name.startswith(".")
+
             def callback(ea, name, _ordinal):
                 if ea and ea != idaapi.BADADDR:
                     ida_name = idc.get_name(ea) or idc.get_func_name(ea) or ""
-                    imports.append(RawImport(module=module_name, name=name or "", ea=ea, ida_name=ida_name))
+
+                    resolved_module = module_name
+                    if needs_resolution:
+                        resolved_module = self._resolve_elf_import_module(
+                            name or "", ida_name, ver_tag_to_lib, sym_to_lib, module_name,
+                        )
+
+                    imports.append(RawImport(module=resolved_module, name=name or "", ea=ea, ida_name=ida_name))
                 return True
 
             ida_nalt.enum_import_names(i, callback)
@@ -371,14 +591,43 @@ class ExtractionEngine:
         functions: List[RawFunction],
         globals_list: List[RawGlobal],
     ) -> List[RawDataAccess]:
-        """Extract simplified dataflow (reads/writes)."""
+        """Extract dataflow (READS/WRITES) for global variables and struct members.
+
+        Strategy:
+        1. Try Hex-Rays ctree analysis first (covers both globals **and**
+           struct members, higher quality).
+        2. Fall back to assembly-level scan when Hex-Rays is unavailable
+           (globals only).
+        """
+        base_addr = ida_nalt.get_imagebase()
+
+        # ---- primary: Hex-Rays ctree analysis ----
+        hexrays_accesses = extract_dataflow_with_hexrays(functions, base_addr)
+        if hexrays_accesses:
+            logger.info(
+                "Using Hex-Rays dataflow: %d accesses (struct=%d, global=%d)",
+                len(hexrays_accesses),
+                sum(1 for a in hexrays_accesses if a.struct_name is not None),
+                sum(1 for a in hexrays_accesses if a.struct_name is None),
+            )
+            return hexrays_accesses
+
+        # ---- fallback: assembly-level scan (globals only) ----
+        logger.info("Falling back to assembly-level dataflow analysis")
+        return self._extract_dataflow_asm(functions, globals_list, base_addr)
+
+    def _extract_dataflow_asm(
+        self,
+        functions: List[RawFunction],
+        globals_list: List[RawGlobal],
+        base_addr: int,
+    ) -> List[RawDataAccess]:
+        """Assembly-level dataflow scan (globals only, no struct members)."""
         accesses: List[RawDataAccess] = []
 
         global_eas = {g.ea for g in globals_list}
         if not global_eas:
             return accesses
-
-        base_addr = ida_nalt.get_imagebase()
 
         for func in functions:
             func_obj = ida_funcs.get_func(func.ea)
@@ -455,6 +704,93 @@ class ExtractionEngine:
                             )
 
         return accesses
+
+    # ------------------------------------------------------------------
+    # ELF import library resolution helpers
+    # ------------------------------------------------------------------
+
+    def _is_elf(self) -> bool:
+        """Check if the current binary is ELF format."""
+        try:
+            return idaapi.inf_get_filetype() == idaapi.f_ELF
+        except Exception:
+            return False
+
+    def _build_elf_import_maps(self):
+        """Parse ELF file to build import resolution maps.
+
+        Uses ``_parse_elf_import_maps()`` which reads the raw binary to
+        extract both version-tag-based and symbol-name-based mappings.
+
+        Returns ``(tag_to_lib, sym_to_lib)``.
+        """
+        if self._elf_tag_to_lib is not None:
+            return self._elf_tag_to_lib, self._elf_sym_to_lib
+
+        self._elf_tag_to_lib = {}
+        self._elf_sym_to_lib = {}
+
+        try:
+            self._elf_tag_to_lib, self._elf_sym_to_lib = _parse_elf_import_maps(self.binary_path)
+            total = len(self._elf_tag_to_lib) + len(self._elf_sym_to_lib)
+            if total:
+                logger.info(
+                    "ELF import maps: %d version tags, %d symbol→lib from %s",
+                    len(self._elf_tag_to_lib),
+                    len(self._elf_sym_to_lib),
+                    self.binary_name,
+                )
+            else:
+                logger.info("ELF: no version info found in %s", self.binary_name)
+        except Exception as exc:
+            logger.warning("ELF import map parsing failed for %s: %s", self.binary_name, exc)
+
+        return self._elf_tag_to_lib, self._elf_sym_to_lib
+
+    @staticmethod
+    def _resolve_elf_import_module(
+        import_name: str,
+        ida_name: str,
+        ver_tag_to_lib: Dict[str, str],
+        sym_to_lib: Dict[str, str],
+        fallback: str,
+    ) -> str:
+        """Resolve an ELF import's library.
+
+        Resolution strategy (ordered by reliability):
+        1. Extract ``@@VERSION_TAG`` from *import_name* and look up in
+           *ver_tag_to_lib*.  (Most reliable — IDA already annotates these.)
+        2. Look up the clean symbol name in *sym_to_lib* which was built
+           from ``.gnu.version`` + ``.dynsym`` cross-referencing.
+           (Catches symbols whose version tag was NOT in the name.)
+        3. Fall back to the original module string (usually ``.dynsym``).
+        """
+        if not import_name and not ida_name:
+            return fallback
+
+        # Strategy 1: extract @@VERSION_TAG from import name
+        tag = None
+        if import_name:
+            if "@@" in import_name:
+                tag = import_name.split("@@", 1)[1]
+            elif "@" in import_name:
+                tag = import_name.split("@", 1)[1]
+        if tag and tag in ver_tag_to_lib:
+            return ver_tag_to_lib[tag]
+
+        # Strategy 2: look up clean symbol name in sym_to_lib
+        # Try import_name (strip version tag), then ida_name
+        clean_name = import_name.split("@@")[0].split("@")[0] if import_name else ""
+        if clean_name and clean_name in sym_to_lib:
+            return sym_to_lib[clean_name]
+        if ida_name and ida_name in sym_to_lib:
+            return sym_to_lib[ida_name]
+
+        return fallback
+
+    # ------------------------------------------------------------------
+    # end ELF helpers
+    # ------------------------------------------------------------------
 
     def _build_export_set(self) -> set:
         export_set = set()

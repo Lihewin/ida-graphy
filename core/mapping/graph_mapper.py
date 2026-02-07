@@ -2,7 +2,8 @@
 
 import hashlib
 import json
-from typing import Dict, List
+import logging
+from typing import Dict, List, Optional, Tuple
 
 from core.models import (
     GraphData,
@@ -32,6 +33,8 @@ from core.extraction.raw_data import (
 )
 from .id_generator import NodeIDGenerator
 from .struct_normalizer import StructNameNormalizer
+
+logger = logging.getLogger(__name__)
 
 
 class GraphMapper:
@@ -104,6 +107,9 @@ class GraphMapper:
 
         struct_root_map: Dict[str, DataSlotNode] = {}
         struct_orig_name_map: Dict[str, str] = {}
+        # struct_slot_map: (normalized_name, offset) -> DataSlotNode
+        # Used by _map_data_access to resolve struct READS/WRITES
+        struct_slot_map: Dict[Tuple[str, int], DataSlotNode] = {}
         for member in raw_data.struct_members:
             normalized_name = self.normalizer.normalize(member.struct_name)
             if normalized_name not in struct_orig_name_map:
@@ -127,6 +133,7 @@ class GraphMapper:
             node = self._map_struct_member(member, normalized_name)
             graph.dataslots.append(node)
             graph.embeds.append(EmbedsEdge(from_id=root.uid, to_id=node.uid))
+            struct_slot_map[(normalized_name, member.offset)] = node
 
         for func in graph.functions:
             graph.contains.append(ContainsEdge(from_id=binary_node.hash, to_id=func.uid))
@@ -151,7 +158,9 @@ class GraphMapper:
                 graph.links_to.append(edge)
 
         for access in raw_data.data_accesses:
-            edge = self._map_data_access(access, func_map, global_map)
+            edge = self._map_data_access(
+                access, func_map, global_map, struct_slot_map, graph,
+            )
             if edge:
                 if isinstance(edge, WritesEdge):
                     graph.writes.append(edge)
@@ -308,10 +317,55 @@ class GraphMapper:
         access: RawDataAccess,
         func_map: Dict[int, FunctionNode],
         global_map: Dict[int, DataSlotNode],
-    ):
+        struct_slot_map: Dict[Tuple[str, int], DataSlotNode],
+        graph: GraphData,
+    ) -> Optional[object]:
+        """Map a raw data-access to a READS or WRITES edge.
+
+        Supports two paths:
+        1. **Struct member** — when ``access.struct_name`` is set, resolve via
+           *struct_slot_map*.  If the member is not found (e.g. Hex-Rays
+           discovered a type not in IDA's struct list), dynamically create the
+           :class:`DataSlotNode` so no information is lost.
+        2. **Global variable** — fall back to *global_map* keyed by EA.
+        """
         func = func_map.get(access.func_ea)
-        target = global_map.get(access.target_ea)
-        if not func or not target:
+        if not func:
+            return None
+
+        target: Optional[DataSlotNode] = None
+
+        if access.struct_name is not None and access.member_offset is not None:
+            # ---- struct member path ----
+            normalized = self.normalizer.normalize(access.struct_name)
+            key = (normalized, access.member_offset)
+            target = struct_slot_map.get(key)
+
+            if target is None:
+                # Dynamically create a DataSlotNode for a Hex-Rays-discovered
+                # member that does not exist in IDA's struct list.
+                target = DataSlotNode(
+                    uid=self.id_gen.get_struct_slot_id(normalized, access.member_offset),
+                    base_type=normalized,
+                    base_type_orig=access.struct_name,
+                    offset=access.member_offset,
+                    size=0,
+                    name=f"field_{access.member_offset:X}",
+                    orig_name="",
+                    is_global=False,
+                )
+                struct_slot_map[key] = target
+                graph.dataslots.append(target)
+                logger.debug(
+                    "Dynamic DataSlot created: %s+0x%X (from Hex-Rays)",
+                    normalized,
+                    access.member_offset,
+                )
+        else:
+            # ---- global variable path ----
+            target = global_map.get(access.target_ea)
+
+        if target is None:
             return None
 
         if access.is_write:
