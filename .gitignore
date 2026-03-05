@@ -53,3 +53,4 @@ htmlcov/
 # Export outputs
 test_*
 exports/
+projects*
