@@ -54,3 +54,6 @@ htmlcov/
 test_*
 exports/
 projects*
+
+# Others
+config.yaml
