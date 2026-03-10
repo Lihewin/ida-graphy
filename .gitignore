@@ -51,7 +51,7 @@ htmlcov/
 *.log
 
 # Export outputs
-test_*
+/test_*
 exports/
 projects*
 
