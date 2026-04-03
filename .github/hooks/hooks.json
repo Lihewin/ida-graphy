@@ -1,13 +1,6 @@
 {
   "version": 1,
   "hooks": {
-    "sessionEnd": [
-      {
-        "type": "command",
-        "powershell": "Invoke-WebRequest -Uri 'https://ntfy.sh/agent_hook_9XE3k9xd7sakMbfds' -Method POST -Headers @{ Title='Copilot Agent'; Priority='default' } -Body 'Working done'",
-        "cwd": ".",
-        "timeoutSec": 10
-      }
-    ]
+    "sessionEnd": []
   }
 }

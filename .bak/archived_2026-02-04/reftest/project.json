@@ -1,0 +1,19 @@
+{
+    "name": "reftest",
+    "description": "",
+    "created_time": "2026-02-03T00:24:08.219407",
+    "modified_time": "2026-02-04T15:08:56.841569",
+    "database_name": "idg-project-reftest",
+    "binaries": [
+        {
+            "path": "C:\\Users\\vm\\Desktop\\ida-graphy\\test_binaries\\at.exe",
+            "name": "at.exe",
+            "hash": "5b97c39d87ad627c53023bfebb0ea1b5227c3f4e86e3bf06b23f3e4b0d6726e2",
+            "added_time": "2026-02-03T00:24:41.523378",
+            "last_analyzed": "2026-02-04T15:08:56.841560",
+            "last_modified": "2019-12-07T17:09:00.604624",
+            "size": 31232
+        }
+    ],
+    "config_overrides": {}
+}

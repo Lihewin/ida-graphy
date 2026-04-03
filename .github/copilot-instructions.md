@@ -460,7 +460,7 @@ slot_id = gen.get_struct_slot_id("SessionEntry", 8)
 ### 外部依赖
 - **IDA Pro 9.0+**：二进制分析必需（不可通过 pip 安装）
 - **Neo4j**：可选但推荐用于图操作
-- **Python 包**：PyYAML、neo4j、tqdm（见 requirements.txt）
+- **Python 包**：PyYAML、neo4j、tqdm（见 `pyproject.toml` 的 `dependencies`）
 
 ### 跨组件通信
 - **数据流**：`ExtractionEngine` → `RawBinaryData` → `GraphMapper` → `GraphData` → `ExportManager` → Neo4j/文件

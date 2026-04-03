@@ -204,7 +204,6 @@ def test_project_structure():
         "exporters/__init__.py",
         "ida_graphy.py",
         "config.yaml",
-        "requirements.txt",
         "pyproject.toml",
     ]
     

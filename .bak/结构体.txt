@@ -1,0 +1,27 @@
+我们需要在预处理阶段实施**“结构体规范化（Canonicalization）”**策略。以下是具体的操作方案：1. ID 生成策略：剥离 Binary 依赖这是最重要的一步。对于全局变量，ID 必须包含 Binary Hash（因为它们是私有的）。但对于结构体成员，ID 绝不能包含 Binary Hash。原则： 只要结构体名字相同（规范化后）、偏移量相同，它们就是同一个 DataSlot，无论它出现在哪个二进制文件中。ID 公式：$$ID = Hash(NormalizedStructName + "\_" + AbsoluteOffset)$$这样，当 main.exe 访问 Session+0x4，和 plugin.dll 访问 Session+0x4 时，生成的哈希值是一样的，它们会自动连接到图数据库中的同一个 DataSlot 节点。2. 名字清洗与规范化 (Name Normalization)不同二进制的符号表可能略有差异，或者 IDA 自动生成的名称不一致。需要在生成 ID 前进行清洗。清洗规则建议：去除前缀： 去掉 struct , class , _, T_ 等常见前缀。去除生成的后缀： IDA 可能会生成 Session_0, Session_1。需要正则去除数字后缀，还原为 Session。统一大小写： 建议统一转为小写或大写，避免 SESSION 和 Session 被识别为两个。代码示例：Pythonimport re
+
+def normalize_struct_name(raw_name):
+    # 1. 去除 "struct " 等前缀
+    name = raw_name.replace("struct ", "").replace("class ", "")
+    # 2. 去除 IDA 可能添加的冲突后缀 (e.g., Session_1 -> Session)
+    # 注意：这需要谨慎，确保不是真的有两个不同结构体
+    name = re.sub(r"_\d+$", "", name) 
+    # 3. 清理下划线前缀
+    name = name.lstrip("_")
+    return name
+3. “并集”合并策略 (Union Merging)不同二进制对同一个结构体的定义可能不完整。Binary A 可能只定义了 offset 0, 4。Binary B 可能定义了 offset 0, 4, 8, 12。在导入 Neo4j 时，应该采用 MERGE (Upsert) 逻辑，取各方定义的并集。Neo4j 导入逻辑：节点创建： 使用 MERGE 语句。如果节点已存在（由 A 创建），B 再导入时不会重复创建。属性更新：Name (成员名): 遵循“有意义覆盖无意义”原则。如果图中现有的名字是 field_4，而当前导入的是 status，则更新为 status。Type: 记录最详细的类型。Cypher 示例：Cypher// 假设这是从 Binary B 导入的数据
+MERGE (s:DataSlot {uid: "Hash_Session_4"})
+ON CREATE SET 
+    s.name = "status", 
+    s.base_type = "Session", 
+    s.offset = 4
+ON MATCH SET
+    // 如果原名是自动生成的 field_4，则更新为更有意义的 status
+    s.name = CASE WHEN s.name STARTS WITH "field_" THEN "status" ELSE s.name END
+4. 处理“别名”与“类型转换” (Handling Aliases)这是最棘手的情况：同一个结构体在 Kernel 模块叫 ProcessObject，在 User 模块叫 HandleTable，但它们内存布局是一样的。或者，代码中存在大量的 void* 强转。解决方案：语义映射表 (Semantic Map)在预处理脚本中，增加一个别名映射配置。Python# struct_aliases.json
+{
+    "ProcessObject": "EPROCESS",
+    "_EPROCESS": "EPROCESS",
+    "tagPROCESS": "EPROCESS"
+}
+在生成 ID 之前，先查表将所有变体映射为标准名称（Canonical Name）。这样所有模块都统一指向 EPROCESS 结构体。5. 最终图谱结构：星形汇聚应用上述策略后，你的图谱会呈现出漂亮的星形汇聚结构：外围： Binary A (Func1, Func2) 和 Binary B (Func3, Func4)。中心： DataSlot (Session.status)。连接：Func1 (from A) -[:WRITES]-> DataSlotFunc3 (from B) -[:READS]-> DataSlotAI 的收益：AI 不需要知道 Func1 和 Func3 在不同的文件中。它只看到它们通过同一个 DataSlot 连接在了一起，直接打通了跨二进制的数据流。总结 ChecklistDataSlot ID 生成：不包含 Binary Hash。结构体名称：必须经过清洗和映射。导入策略：使用 MERGE 取并集，保留最有意义的字段名。全局变量：必须包含 Binary Hash（它们不跨二进制共享）。
