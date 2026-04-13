@@ -503,18 +503,22 @@ class GraphData:
         for binary in other.binaries:
             if binary.hash not in existing_binary_hashes:
                 self.binaries.append(binary)
+                existing_binary_hashes.add(binary.hash)
                 
         for function in other.functions:
             if function.uid not in existing_function_uids:
                 self.functions.append(function)
+                existing_function_uids.add(function.uid)
                 
         for dataslot in other.dataslots:
             if dataslot.uid not in existing_dataslot_uids:
                 self.dataslots.append(dataslot)
+                existing_dataslot_uids.add(dataslot.uid)
                 
         for string in other.strings:
             if string.hash not in existing_string_hashes:
                 self.strings.append(string)
+                existing_string_hashes.add(string.hash)
         
         # 合并边（避免重复）
         existing_contains = {(c.from_id, c.to_id) for c in self.contains}
@@ -528,15 +532,18 @@ class GraphData:
         for edge in other.contains:
             if (edge.from_id, edge.to_id) not in existing_contains:
                 self.contains.append(edge)
+                existing_contains.add((edge.from_id, edge.to_id))
 
         for edge in other.embeds:
             if (edge.from_id, edge.to_id) not in existing_embeds:
                 self.embeds.append(edge)
+                existing_embeds.add((edge.from_id, edge.to_id))
                 
         for edge in other.calls:
             key = (edge.from_id, edge.to_id, edge.call_type, edge.loc, edge.seq_order)
             if key not in existing_calls:
                 self.calls.append(edge)
+                existing_calls.add(key)
             else:
                 # 如果已存在相同的调用，则累加计数
                 for existing_call in self.calls:
@@ -552,18 +559,22 @@ class GraphData:
             key = (edge.from_id, edge.to_id, edge.dll_name, edge.func_name)
             if key not in existing_links_to:
                 self.links_to.append(edge)
+                existing_links_to.add(key)
                 
         for edge in other.references:
             if (edge.from_id, edge.to_id) not in existing_references:
                 self.references.append(edge)
+                existing_references.add((edge.from_id, edge.to_id))
                 
         for edge in other.writes:
             if (edge.from_id, edge.to_id) not in existing_writes:
                 self.writes.append(edge)
+                existing_writes.add((edge.from_id, edge.to_id))
                 
         for edge in other.reads:
             if (edge.from_id, edge.to_id) not in existing_reads:
                 self.reads.append(edge)
+                existing_reads.add((edge.from_id, edge.to_id))
 
 
 # ============================================================================

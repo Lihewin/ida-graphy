@@ -1,18 +1,18 @@
 [project]
 name = "ida-graphy"
 version = "1.0.0"
-description = "Neo4j-based binary analysis and graph extraction tool using IDA Pro"
+description = "Embedded LadybugDB-based binary analysis and graph extraction tool using IDA Pro"
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
     "pyyaml>=6.0",
-    "neo4j>=5.0",
+    "real-ladybug>=0.12.0",
     "tqdm>=4.0",
 ]
 authors = [
     { name = "IDA-Graphy Team" }
 ]
-keywords = ["binary-analysis", "reverse-engineering", "neo4j", "ida-pro", "graph-database"]
+keywords = ["binary-analysis", "reverse-engineering", "ladybugdb", "ida-pro", "graph-database"]
 
 [project.scripts]
 ida-graphy = "ida_graphy:main"

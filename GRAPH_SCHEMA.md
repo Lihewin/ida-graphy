@@ -1,6 +1,6 @@
 # IDA-Graphy Graph Schema (AI Reference)
 
-This document describes the graph data model produced by IDA-Graphy, including node types, properties, and ID generation rules. It is intended for AI systems that connect to the Neo4j database.
+This document describes the graph data model produced by IDA-Graphy, including node types, properties, and ID generation rules. It is intended for AI systems that read the embedded LadybugDB database file (e.g., `graph.lbug`).
 
 ## Scope
 

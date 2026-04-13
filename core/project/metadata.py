@@ -55,7 +55,7 @@ class ProjectMetadata:
     description: str
     created_time: str
     modified_time: str
-    database_name: str
+    graph_db_file: str = "graph.lbug"
     binaries: List[BinaryFile] = field(default_factory=list)
     config_overrides: Dict[str, any] = field(default_factory=dict)
 
@@ -66,7 +66,7 @@ class ProjectMetadata:
             "description": self.description,
             "created_time": self.created_time,
             "modified_time": self.modified_time,
-            "database_name": self.database_name,
+            "graph_db_file": self.graph_db_file,
             "binaries": [binary.to_dict() for binary in self.binaries],
             "config_overrides": self.config_overrides,
         }
@@ -80,7 +80,8 @@ class ProjectMetadata:
             description=data["description"],
             created_time=data["created_time"],
             modified_time=data["modified_time"],
-            database_name=data["database_name"],
+            # Backward compatible: legacy projects may still have `database_name`.
+            graph_db_file=data.get("graph_db_file", "graph.lbug"),
             binaries=binaries,
             config_overrides=data.get("config_overrides", {}),
         )

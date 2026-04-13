@@ -6,7 +6,7 @@
 
 1. `core/extraction/engine.py` 负责调用 IDA/idalib，抽取原始 DTO（`RawBinaryData`）。
 2. `core/mapping/graph_mapper.py` 将 `RawBinaryData` 映射为 `GraphData`（节点/边）。
-3. `exporters/export_manager.py` 负责导出到 Neo4j/文件。
+3. `exporters/export_manager.py` 负责导出到 LadybugDB/文件。
 
 该流程取代了旧版一体化提取器实现，职责更清晰、可扩展性更强。
 
@@ -32,7 +32,7 @@
 
 ### 3. 导出（ExportManager）
 
-- Neo4j 直接写入
+- LadybugDB 文件写入（`graph.lbug`）
 - 可选文件导出（伪 C/结构体/表）
 
 ## 使用方法

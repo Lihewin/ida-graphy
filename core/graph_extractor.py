@@ -1,6 +1,6 @@
 """
 Graph Extractor (DEPRECATED)
-图数据提取器 - 从IDA数据库中提取符合Neo4j模型的节点和边
+图数据提取器 - 从IDA数据库中提取符合 GraphData 模型的节点和边
 """
 
 import os
@@ -38,7 +38,7 @@ class GraphExtractor:
     """
     图数据提取器
     
-    从IDA数据库中提取符合Neo4j模型的节点和边。
+    从IDA数据库中提取符合 GraphData 模型的节点和边。
     这是不包含数据流分析的基础版本（WRITES/READS边将由数据流分析模块完成）。
     """
     

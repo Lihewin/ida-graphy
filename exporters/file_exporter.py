@@ -2,7 +2,7 @@
 File Exporter - Export decompiled code, structures, and metadata to files.
 
 This module exports IDA analysis results to human-readable files that can be
-referenced from the Neo4j graph database through file path attributes.
+referenced from the graph database through file path attributes.
 """
 
 import os

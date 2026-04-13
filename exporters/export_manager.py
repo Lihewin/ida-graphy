@@ -7,31 +7,30 @@ from typing import Dict, Optional
 from core.models import GraphData
 from core.project.metadata import ProjectMetadata
 from . import file_exporter
-from .neo4j_exporter import Neo4jExporter, create_neo4j_exporter
+from .ladybugdb_exporter import LadybugDBExporter, create_ladybugdb_exporter
 
 logger = logging.getLogger(__name__)
 
 
 class ExportManager:
-    """Unified export manager for Neo4j and file exports."""
+    """Unified export manager for LadybugDB and file exports."""
 
     def __init__(self, config: Dict, project_metadata: ProjectMetadata):
         self.config = config or {}
         self.project_metadata = project_metadata
-        self.neo4j_exporter: Optional[Neo4jExporter] = create_neo4j_exporter(self.config)
+        self.ladybugdb_exporter: Optional[LadybugDBExporter] = create_ladybugdb_exporter(self.config)
 
     def export_all(self, graph_data: GraphData, binary_path: str):
-        """Export to Neo4j and optional file exports."""
-        if not self.neo4j_exporter or not self.neo4j_exporter.neo4j_manager:
-            raise RuntimeError("Neo4j is not configured or unavailable")
-
-        self.export_to_neo4j(graph_data)
+        """Export to LadybugDB and optional file exports."""
+        self.export_to_ladybugdb(graph_data)
 
         if self._should_export_files() and binary_path:
             self.export_files(binary_path, graph_data)
 
-    def export_to_neo4j(self, graph_data: GraphData) -> Dict[str, int]:
-        return self.neo4j_exporter.export_to_neo4j(self.project_metadata, graph_data)
+    def export_to_ladybugdb(self, graph_data: GraphData) -> Dict[str, int]:
+        if not self.ladybugdb_exporter:
+            raise RuntimeError("LadybugDB exporter unavailable")
+        return self.ladybugdb_exporter.export_to_ladybugdb(self._get_graph_db_path(), graph_data, rebuild=True)
 
     def export_files(self, binary_path: str, graph_data: GraphData):
         output_dir = self._get_project_dir()
@@ -47,6 +46,9 @@ class ExportManager:
         project_dir = os.path.join(root_dir, self.project_metadata.name)
         os.makedirs(project_dir, exist_ok=True)
         return project_dir
+
+    def _get_graph_db_path(self) -> str:
+        return os.path.join(self._get_project_dir(), self.project_metadata.graph_db_file)
 
     def _should_export_files(self) -> bool:
         export_cfg = self.config.get("export", {})

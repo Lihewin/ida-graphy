@@ -5,7 +5,7 @@
 IDA-Graphy 是一个模块化的二进制分析框架，使用 IDA Pro 从可执行文件创建图数据库。这是一个**双层项目**：
 
 1. **表层**："IDA Export" - 简单的反编译文件导出，供 AI IDE 使用
-2. **核心层**："IDA-Graphy" - 基于项目的高级二进制分析，集成 Neo4j 图数据库
+2. **核心层**："IDA-Graphy" - 基于项目的高级二进制分析，集成 LadybugDB 图数据库
 
 ## 模块化架构
 
@@ -20,7 +20,7 @@ IDA-Graphy 是一个模块化的二进制分析框架，使用 IDA Pro 从可执
 │               1. ProjectManager (项目管理器)                      │
 │   core/project/                                                  │
 │   - 工作目录/项目生命周期管理                                      │
-│   - Neo4j 数据库连接协调                                          │
+│   - LadybugDB 数据库文件协调                                      │
 │   - files_manifest.json 维护                                     │
 └─────────────────────────────┬───────────────────────────────────┘
                               │
@@ -44,7 +44,7 @@ IDA-Graphy 是一个模块化的二进制分析框架，使用 IDA Pro 从可执
 ┌─────────────────────────────▼───────────────────────────────────┐
 │              4. ExportManager (导出管理器)                        │
 │   exporters/                                                     │
-│   - Neo4j 数据库导出                                              │
+│   - LadybugDB 数据库导出                                          │
 │   - 文件导出 (伪C、结构体、导入导出表、字符串表)                     │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -56,13 +56,13 @@ IDA-Graphy 是一个模块化的二进制分析框架，使用 IDA Pro 从可执
 | **ProjectManager** | CLI 命令 | 协调其他模块 | 项目 CRUD、文件变更追踪、sync 流程编排 |
 | **ExtractionEngine** | 二进制文件路径 | `RawBinaryData` DTO | IDA API 调用、原始数据收集、DataFlow 分析 |
 | **GraphMapper** | `RawBinaryData` | `GraphData` | ID 生成、模型构建、结构体规范化 |
-| **ExportManager** | `GraphData` | Neo4j/文件 | 数据持久化、文件生成 |
+| **ExportManager** | `GraphData` | LadybugDB/文件 | 数据持久化、文件生成 |
 
 ### 关键设计原则
 
 1. **严格分层**：提取引擎只返回原始数据（地址、名称），不生成 ID；图映射器负责所有 ID 计算
 2. **sync 自动导出**：每次项目同步时自动生成所有文件（伪C、结构体、导入导出表、字符串表）
-3. **独立数据库**：每个项目维护独立 Neo4j 数据库（`idg-project-{name}`）
+3. **独立数据库文件**：每个项目维护独立 LadybugDB 文件（默认 `graph.lbug`，位于项目目录内）
 4. **DataFlow 集成**：Hex-Rays 可用时自动启用 ctree 分析，提取 READS/WRITES 边
 
 ## 目录结构
@@ -91,12 +91,12 @@ core/
 exporters/
 ├── __init__.py
 ├── export_manager.py           # ExportManager 统一接口
-├── neo4j_exporter.py           # Neo4j 导出
+├── ladybugdb_exporter.py       # LadybugDB 导出
 └── file_exporter.py            # 文件导出 (伪C/结构体/表)
 
 database/
 ├── __init__.py
-└── neo4j_manager.py            # Neo4j 连接管理
+└── ladybugdb_manager.py        # LadybugDB 管理（嵌入式）
 
 # 兼容性与历史文件
 已移除旧兼容层与历史实现，请直接使用 core/mapping 和 core/extraction 下的新模块。
@@ -268,7 +268,7 @@ database/
 
 ### 项目管理（`core/project/`）
 - **项目中心式工作流**：将多个二进制文件组织到统一的分析任务中
-- **Neo4j 数据库隔离**：每个项目获得独立数据库（前缀：`idg-project-`）
+- **LadybugDB 数据库文件隔离**：每个项目获得独立数据库文件（默认 `graph.lbug`，位于项目目录内）
 - **变更跟踪**：基于 SHA256 的文件修改检测（`file_tracker.py`）
 - **元数据持久化**：`files_manifest.json` + 项目元数据
 - **sync 流程编排**：协调提取→映射→导出的完整流程
@@ -279,7 +279,7 @@ database/
 - **图提取**：自动化的函数/字符串/结构分析
 
 ### 存储层
-- **主要方式**：Neo4j 图数据库（可配置连接）
+- **主要方式**：LadybugDB 嵌入式图数据库（每项目一个数据库文件）
 - **事务支持**：原子操作确保数据一致性
 
 ## 关键开发工作流
@@ -294,12 +294,7 @@ ida:
   path: "C:\\Program Files\\IDA Professional 9.2"
   idalib_python: "C:\\Program Files\\IDA Professional 9.2\\idalib\\python"
 
-# 配置 Neo4j（可选）
-neo4j:
-  connection:
-    uri: "neo4j://127.0.0.1:7687"
-    user: "neo4j"
-    password: "your_password"
+# LadybugDB 为嵌入式数据库：项目目录下生成 `graph.lbug`，无需额外连接配置
 ```
 
 ### 项目工作流
@@ -320,11 +315,11 @@ ida-graphy project status malware_analysis
 
 ### 测试与验证
 ```bash
-# 测试 Neo4j 连接
-ida-graphy neo4j test
+# 测试 LadybugDB bindings
+ida-graphy ladybugdb test
 
-# 列出项目数据库
-ida-graphy neo4j databases
+# 列出项目数据库文件
+ida-graphy ladybugdb databases
 
 # 运行项目测试
 pytest tests/
@@ -452,18 +447,18 @@ slot_id = gen.get_struct_slot_id("SessionEntry", 8)
 - **环境检测**：自动验证 IDA/idalib 可用性
 
 ### 错误处理模式
-- **自定义异常**：`ProjectError`、`Neo4jError`、`ProjectExportError`
+- **自定义异常**：`ProjectError`、`LadybugDBError`、`LadybugDBExportError`
 - **事务回滚**：失败时保证数据库一致性
 
 ## 集成点
 
 ### 外部依赖
 - **IDA Pro 9.0+**：二进制分析必需（不可通过 pip 安装）
-- **Neo4j**：可选但推荐用于图操作
-- **Python 包**：PyYAML、neo4j、tqdm（见 `pyproject.toml` 的 `dependencies`）
+- **LadybugDB**：嵌入式图数据库（Python bindings：`real-ladybug`）
+- **Python 包**：PyYAML、real-ladybug、tqdm（见 `pyproject.toml` 的 `dependencies`）
 
 ### 跨组件通信
-- **数据流**：`ExtractionEngine` → `RawBinaryData` → `GraphMapper` → `GraphData` → `ExportManager` → Neo4j/文件
+- **数据流**：`ExtractionEngine` → `RawBinaryData` → `GraphMapper` → `GraphData` → `ExportManager` → LadybugDB/文件
 - **项目生命周期**：`ProjectManager` 编排整个 sync 流程，协调各模块
 - **配置级联**：全局配置 → 项目覆盖 → 运行时参数
 
@@ -498,7 +493,8 @@ slot_id = gen.get_struct_slot_id("SessionEntry", 8)
 - [`core/extraction/raw_data.py`]：原始数据 DTO 定义
 - [`core/mapping/graph_mapper.py`]：图模型映射器
 - [`core/mapping/id_generator.py`]：节点 ID 生成器
-- [`database/neo4j_manager.py`]：图数据库操作
+- [`database/ladybugdb_manager.py`]：图数据库操作
+- [`exporters/ladybugdb_exporter.py`]：LadybugDB 导出实现
 - [`exporters/export_manager.py`]：统一导出管理器
 
-在使用此代码库时，始终理解项目中心式的特性和四层模块化架构。数据流向：`提取引擎(RawData)` → `图映射器(GraphData)` → `导出管理器(Neo4j/文件)`。图数据模型是基础——所有操作都围绕创建、操作和存储这些结构化的二进制分析结果表示。
+在使用此代码库时，始终理解项目中心式的特性和四层模块化架构。数据流向：`提取引擎(RawData)` → `图映射器(GraphData)` → `导出管理器(LadybugDB/文件)`。图数据模型是基础——所有操作都围绕创建、操作和存储这些结构化的二进制分析结果表示。

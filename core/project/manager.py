@@ -84,25 +84,21 @@ class ProjectManager:
 
         now = datetime.now().isoformat()
 
-        if config and "neo4j" in config and "projects" in config["neo4j"]:
-            database_prefix = config["neo4j"]["projects"].get("database_prefix", "idg-project-")
-        else:
-            database_prefix = "idg-project-"
-
-        database_name = f"{database_prefix}{project_name}"
-
         metadata = ProjectMetadata(
             name=project_name,
             description=description,
             created_time=now,
             modified_time=now,
-            database_name=database_name,
             config_overrides=config_overrides or {},
         )
 
         try:
             metadata.save_to_file(str(self._get_project_file(project_name)))
-            logger.info(f"项目 '{project_name}' 创建成功，数据库: {database_name}")
+            logger.info(
+                "项目 '%s' 创建成功，LadybugDB 文件: %s",
+                project_name,
+                metadata.graph_db_file,
+            )
             return metadata
         except Exception as e:
             if project_dir.exists():
@@ -357,9 +353,13 @@ class Project:
         return self._metadata
 
     @property
-    def database_name(self) -> str:
-        """获取项目对应的数据库名"""
-        return self.metadata.database_name
+    def graph_db_file(self) -> str:
+        """项目对应的 LadybugDB 文件名（相对于项目目录）"""
+        return self.metadata.graph_db_file
+
+    def graph_db_path(self) -> str:
+        """项目对应的 LadybugDB 文件绝对路径"""
+        return str(self.manager._get_project_dir(self.name) / self.graph_db_file)
 
     def get_binary_files(self) -> List[BinaryFile]:
         """获取项目中的所有二进制文件"""

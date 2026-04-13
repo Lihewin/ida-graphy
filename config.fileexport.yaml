@@ -1,0 +1,18 @@
+# IDA-Graphy Configuration File (file export enabled)
+# =============================================================================
+
+ida:
+  path: "/home/zhubj/.local/opt/ida-pro-93"
+  idalib_python: "/home/zhubj/.local/opt/ida-pro-93/idalib/python"
+
+export:
+  enable_file_export: true
+
+analysis:
+  enable_dataflow: true
+
+projects:
+  root_dir: "projects"
+
+logging:
+  file: "ida_graphy.log"
