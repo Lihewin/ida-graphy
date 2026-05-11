@@ -28,7 +28,7 @@ py-modules = ["ida_graphy"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["core*", "analyzers*", "exporters*", "database*"]
+include = ["core*", "exporters*", "database*"]
 exclude = ["tests*"]
 
 [build-system]

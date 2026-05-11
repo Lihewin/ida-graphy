@@ -31,6 +31,9 @@ except ImportError:
 
 logger = logging.getLogger("ida-graphy")
 
+STACK_FRAME_TOO_BIG = "stack frame is too big"
+GHIDRA_FALLBACK_STACK_FRAME = "stack_frame_too_big"
+
 
 @dataclass
 class HexraysHarvestResult:
@@ -115,7 +118,7 @@ def harvest_hexrays_ctree(
 
         if not cfunc:
             failure_desc = _hexrays_failure_desc(hf) or "decompile returned None"
-            if failure_desc == "stack frame is too big":
+            if _requires_ghidra_fallback(failure_desc):
                 _record_ghidra_fallback(result, func, hf, failure_desc)
             else:
                 _record_decompile_failure(result, func, failure_desc)
@@ -267,7 +270,7 @@ def _record_ghidra_fallback(
             ea=func.ea,
             name=func.name,
             size=func.size,
-            reason="stack_frame_too_big",
+            reason=GHIDRA_FALLBACK_STACK_FRAME,
             error=error,
             failure_code=int(getattr(hf, "code", 0) or 0),
             failure_ea=int(getattr(hf, "errea", 0) or 0),
@@ -280,6 +283,11 @@ def _hexrays_failure_desc(hf: Any) -> str:
         return hf.desc() if hf else ""
     except Exception:
         return ""
+
+
+def _requires_ghidra_fallback(failure_desc: str) -> bool:
+    """Return True for Hex-Rays hard limits that Ghidra may supplement."""
+    return failure_desc == STACK_FRAME_TOO_BIG
 
 
 def _format_failure_sample(func: RawFunction, error: str) -> str:
@@ -420,6 +428,12 @@ def _log_harvest_summary(result: HexraysHarvestResult, function_count: int) -> N
     )
     for reason, samples in sorted(result.skipped_samples.items()):
         logger.debug("Hex-Rays skipped %s samples: %s", reason, "; ".join(samples))
+    if result.ghidra_fallbacks:
+        samples = "; ".join(
+            f"0x{item.ea:X}:{item.name}:{item.reason}:{item.error}"
+            for item in result.ghidra_fallbacks[:8]
+        )
+        logger.info("Hex-Rays Ghidra fallback queue samples: %s", samples)
     logger.info(
         "Call context analysis: decompiled=%d, not_decompiled=%d, insns=%d, exprs=%d, "
         "calls=%d, ifs=%d, switches=%d, loops=%d, call_sites=%d",

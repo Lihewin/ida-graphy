@@ -1,0 +1,14 @@
+---
+description: Agent workflow and response conventions for this project
+alwaysApply: true
+---
+
+# Agent Workflow
+
+- 默认使用简体中文回复，除非用户明确要求其他语言。
+- 先验证再断言：需要实现细节时读取代码或运行检查，不凭记忆推测。
+- 不确定时明确说明限制，并给出可验证的下一步。
+- 长任务中保持聚焦，围绕用户当前目标推进，避免无关扩展。
+- 涉及第三方库、框架或外部 API 时，优先查询最新文档；Python 标准库和项目内部逻辑可直接基于代码判断。
+- 复杂、多文件或架构探索任务可使用 subagent；窄范围查询优先直接用 `rg`、`Glob`、`ReadFile`。
+- 修改代码后运行与改动风险匹配的检查，并报告未能运行的验证。

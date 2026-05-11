@@ -48,6 +48,8 @@ Properties:
 - `signature` (String) Function prototype, if available.
 - `complexity` (Int) Cyclomatic complexity (if available).
 - `binary_id` (String) Redundant cache of owning Binary `hash` for fast filtering.
+- `decompiled_file` (String) Relative path to the primary decompile artifact, when exported.
+- `pseudocode_hash` (String) SHA-256 of the exported pseudocode/content used for change detection.
 
 ID rule:
 - `uid = md5(binary_hash + "_" + rva_hex)`
@@ -77,6 +79,7 @@ Properties:
 - `size` (Int) Width in bytes (1/2/4/8...)
 - `name` (String) Readable name, e.g., `status`, `flags`, `g_Config`.
 - `is_global` (Boolean) True for global variable, False for struct member.
+- `struct_file` (String) Relative path to the exported structure definition, when available.
 
 ID rules:
 - Struct member: `uid = md5(struct_name + "_" + offset_decimal)`
@@ -100,6 +103,30 @@ Properties:
 
 ID rule:
 - `hash = md5(string_content_utf8)`
+
+### 5) ExportArtifact
+
+Represents a file exported by IDA-Graphy and makes file access explicit for AI tools.
+
+Label: `:ExportArtifact`
+
+Primary ID:
+- `uid`
+
+Properties:
+- `uid` (String) Stable artifact ID.
+- `owner_id` (String) Owning Binary `hash`, Function `uid`, or DataSlot `uid`.
+- `owner_type` (String) One of `Binary`, `Function`, `DataSlot`.
+- `artifact_type` (String) One of `decompile`, `structure`, `strings`, `imports`, `exports`, `structure_summary`, `decompile_failures`, `ghidra_decompile`.
+- `relative_path` (String) Path relative to the project directory, e.g., `exports/foo/decompile/<uid>_name.c`.
+- `content_hash` (String) SHA-256 of the file content when available.
+- `binary_id` (String) Owning Binary `hash`.
+- `binary_name` (String) Owning binary file name.
+- `status` (String) `exported` or `failed`.
+- `error` (String) Export/decompilation error text for failed or fallback artifacts.
+
+ID rule:
+- `uid = md5(binary_id + owner_type + owner_id + artifact_type + relative_path + status)`
 
 ## Edge Types
 
@@ -183,9 +210,32 @@ Properties:
 - `const_val` (String) Comparison constant if any
 - `loc` (Long) Instruction RVA
 
+### HAS_ARTIFACT
+
+Connects graph entities to exported files.
+
+Paths:
+- `(:Binary)-[:HAS_ARTIFACT]->(:ExportArtifact)`
+- `(:Function)-[:HAS_ARTIFACT]->(:ExportArtifact)`
+- `(:DataSlot)-[:HAS_ARTIFACT]->(:ExportArtifact)`
+
+Properties:
+- `from_id` (owner ID)
+- `to_id` (`ExportArtifact.uid`)
+
 ## Notes for Query Authors
 
 - Use Binary `hash` as the top-level scope filter.
 - For cross-binary struct member correlation, query DataSlot with `is_global=false`.
 - For global variables, always join by `binary_id` or Binary `hash`.
 - `func_type` and `is_lib` are the fastest filters when exploring call graphs.
+- Prefer `ExportArtifact.relative_path` over inferred paths when reading exported files.
+- Treat `ghidra_decompile` as supplemental fallback output with provenance, not as Hex-Rays ctree-equivalent output.
+
+Example artifact lookup:
+
+```cypher
+MATCH (f:Function)-[:HAS_ARTIFACT]->(a:ExportArtifact)
+WHERE f.name = "target_function"
+RETURN f.uid, f.name, a.artifact_type, a.relative_path, a.status, a.error;
+```

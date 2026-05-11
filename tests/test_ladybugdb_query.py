@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from core.mapping.id_generator import NodeIDGenerator
 from core.models import BinaryNode, GraphData
 from core.project.manager import ProjectManager
+from database.ladybugdb_manager import HAS_LADYBUG
 from exporters.ladybugdb_exporter import LadybugDBExporter
 from ida_graphy import cmd_ladybugdb_query, _parse_ladybugdb_query_params
 
@@ -24,6 +25,9 @@ class TestLadybugDBQueryCommand(unittest.TestCase):
             _parse_ladybugdb_query_params('[]')
 
     def test_query_command_table_output(self):
+        if not HAS_LADYBUG:
+            self.skipTest("LadybugDB Python bindings are not installed")
+
         with tempfile.TemporaryDirectory() as tmp_dir:
             projects_root = Path(tmp_dir) / "projects"
             manager = ProjectManager(str(projects_root))

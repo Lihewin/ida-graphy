@@ -5,21 +5,22 @@
 ida:
   # Path to IDA Pro installation directory
   path: "C:\\Program Files\\IDA Professional 9.2"
-  
+
   # Path to idalib Python bindings (usually under IDA installation)
   idalib_python: "C:\\Program Files\\IDA Professional 9.2\\idalib\\python"
-
-# Ghidra fallback settings
-ghidra:
-  # Used only for functions Hex-Rays rejects due to hard limits such as
-  # "stack frame is too big".
-  path: "/home/zhubj/.local/opt/ghidra"
 
 # Export Settings
 export:
   # Enable file export (decompiled code, structures, etc.)
   # Requires Hex-Rays decompiler plugin
   enable_file_export: true
+
+  # Ghidra fallback is used only for functions Hex-Rays rejects due to hard
+  # limits such as "stack frame is too big". Requires Java/JDK on PATH or JAVA_HOME.
+  ghidra_fallback:
+    path: "/opt/ghidra"
+    # Optional: override the analyzeHeadless executable path directly.
+    # analyze_headless: "/opt/ghidra/support/analyzeHeadless"
 
 # Analysis Options
 analysis:

@@ -47,7 +47,7 @@ class ExportManager:
         return results
 
     def export_ghidra_fallbacks(self, binary_path: str, graph_data: GraphData):
-        """Run Ghidra fallback for functions queued by Hex-Rays hard limits."""
+        """Run Ghidra fallback for queued hard limits after the IDA DB is closed."""
         if not graph_data.ghidra_fallbacks:
             return []
 

@@ -33,15 +33,15 @@ ExtractionEngine        # idalib 调用，返回 RawBinaryData DTO
 GraphMapper             # 原始数据 → 图节点/边，ID 生成，结构体规范化
       │
       ▼
-ExportManager           # 写入 LadybugDB / 生成伪C、结构体、导入导出、字符串文件
+ExportManager           # 写入 LadybugDB / 生成文件 artifact / 运行 Ghidra fallback
 ```
 
 | 模块 | 路径 | 职责 |
 |------|------|------|
 | ProjectManager | `core/project/` | 项目 CRUD、变更追踪、sync 编排 |
-| ExtractionEngine | `core/extraction/` | IDA API 调用、DataFlow 分析 |
+| ExtractionEngine | `core/extraction/` | IDA API 调用、Hex-Rays single-cfunc harvest、DataFlow 分析 |
 | GraphMapper | `core/mapping/` | ID 生成、模型构建、跨二进制解析 |
-| ExportManager | `exporters/` | LadybugDB 持久化、文件生成 |
+| ExportManager | `exporters/` | LadybugDB 持久化、文件 artifact、Ghidra fallback 补充导出 |
 
 ---
 
@@ -50,13 +50,18 @@ ExportManager           # 写入 LadybugDB / 生成伪C、结构体、导入导�
 - **IDA Pro 9.0+**
 - **Python 3.8+**
 - **LadybugDB Python bindings**（推荐：`real-ladybug`）
+- **Ghidra + Java/JDK**（仅当 Hex-Rays 触发 `stack frame is too big` fallback 时需要）
 
 ---
 
 ## 安装
 
 ```bash
-pip install -e .
+# 推荐：创建本地 .venv 并安装运行/开发依赖
+uv sync --extra dev
+
+# 或使用 pip
+pip install -e ".[dev]"
 ```
 
 ---
@@ -69,6 +74,14 @@ pip install -e .
 ida:
   path: "C:\\Program Files\\IDA Professional 9.2"
   idalib_python: "C:\\Program Files\\IDA Professional 9.2\\idalib\\python"
+
+export:
+  enable_file_export: true
+  ghidra_fallback:
+    # 仅用于 Hex-Rays 硬限制函数的补充反编译。
+    path: "/opt/ghidra"
+    # 可选：直接指定 analyzeHeadless。
+    # analyze_headless: "/opt/ghidra/support/analyzeHeadless"
 
 projects:
       root_dir: "projects"
@@ -96,6 +109,16 @@ ida-graphy export <二进制文件路径>
 | `strings.txt` | 字符串表 |
 | `imports.txt` | 导入表 |
 | `exports.txt` | 导出表 |
+
+项目式分析会把导出文件同步建模为 `ExportArtifact` 节点，并通过 `HAS_ARTIFACT` 连接到 `Binary`、`Function` 或结构体根 `DataSlot`。AI 不需要猜测文件名，可以直接查询 `relative_path` 后读取对应 artifact。
+
+示例查询：
+
+```cypher
+MATCH (f:Function)-[:HAS_ARTIFACT]->(a:ExportArtifact)
+WHERE f.name = "target_function"
+RETURN f.name, a.artifact_type, a.relative_path, a.status;
+```
 
 ### IDA-Graphy（项目式分析，写入图数据库）
 
@@ -139,6 +162,7 @@ ida-graphy ladybugdb query <项目名> "MATCH (n) RETURN n LIMIT 5" --output jso
 | `:Function` | 函数节点，区分 NORMAL / IMPORT / EXPORT / THUNK |
 | `:DataSlot` | 结构体成员或全局变量，结构体成员 ID 跨二进制共享 |
 | `:String` | 常量字符串，基于内容去重 |
+| `:ExportArtifact` | 导出文件索引，包含相对路径、内容 hash、状态和错误信息 |
 
 | 边 | 说明 |
 |----|------|
@@ -148,6 +172,13 @@ ida-graphy ladybugdb query <项目名> "MATCH (n) RETURN n LIMIT 5" --output jso
 | `READS` | 函数读取 DataSlot，含条件判断标记 |
 | `WRITES` | 函数写入 DataSlot，含操作类型与常量值 |
 | `REFERENCES` | 函数引用 String |
+| `HAS_ARTIFACT` | Binary / Function / DataSlot 指向导出文件 artifact |
+
+### Hex-Rays 与 Ghidra fallback
+
+Hex-Rays 是主语义来源。`ExtractionEngine` 对每个函数只保留一次 single-cfunc harvest，普通真实函数反编译失败会作为硬错误阻断分析，避免生成看似完整但缺失语义的数据库。
+
+`stack frame is too big` 属于 Hex-Rays 硬限制。这类函数会进入 Ghidra fallback 队列，在 IDA 数据库关闭后由 Ghidra headless 单独导出，artifact 类型为 `ghidra_decompile`，文件头保留 `Source: Ghidra fallback` 与原 Hex-Rays 错误原因。Ghidra 输出是补充上下文，不会伪装成 Hex-Rays ctree 等价结果。
 
 详细 Schema 见 [GRAPH_SCHEMA.md](GRAPH_SCHEMA.md)。
 
@@ -168,11 +199,17 @@ ida-graphy ladybugdb query <项目名> "MATCH (n) RETURN n LIMIT 5" --output jso
 ## 开发
 
 ```bash
-# 运行测试
-pytest tests/
+# 安装依赖
+uv sync --extra dev
 
-# 安装开发依赖
-pip install -e ".[dev]"
+# 运行全量单元测试
+uv run python -m unittest discover tests
+
+# 运行 pytest
+uv run pytest tests/
 ```
+
+项目级 AI 规则位于 `.cursor/rules/`。旧的 Copilot 指令和历史备份/样本文件已从仓库清理，运行产物默认通过 `.gitignore` 排除。
+
 ## 感谢
 Ida-Export模块受到[ida-no-mcp](https://github.com/P4nda0s/IDA-NO-MCP.git)项目启发。

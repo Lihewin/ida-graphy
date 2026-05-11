@@ -1,0 +1,39 @@
+---
+description: IDA-Graphy architecture, data flow, and development conventions
+alwaysApply: true
+---
+
+# IDA-Graphy Project Rules
+
+IDA-Graphy 是双层二进制分析项目：
+- `IDA Export`：导出反编译文件、结构体、字符串、导入导出表，供 AI IDE 使用。
+- `IDA-Graphy`：项目式分析，写入项目内 LadybugDB `graph.lbug`，支持跨二进制查询。
+
+核心数据流：
+`ida_graphy.py` -> `ProjectManager` -> `ExtractionEngine` -> `GraphMapper` -> `ExportManager` -> LadybugDB / exported artifacts。
+
+职责边界：
+- `core/extraction/` 只抽取原始 DTO，例如 `RawBinaryData`、`RawFunction`、`RawDataAccess`、`RawGhidraFallback`；不要在提取层生成图 ID。
+- `core/mapping/` 负责 ID 生成、结构体规范化、`RawBinaryData` 到 `GraphData` 的映射。
+- `core/models.py` 定义图节点和边，新增模型必须提供稳定的 `to_dict()`。
+- `exporters/` 负责 LadybugDB、文件 artifact、Ghidra fallback 导出和回填。
+
+语义精度要求：
+- Hex-Rays 是主语义来源，single-cfunc harvest 中真实函数反编译失败必须硬失败。
+- safe skip 仅限 import、external、no body、thunk 等不应反编译目标。
+- `stack frame is too big` 是 Hex-Rays 硬限制，进入 Ghidra fallback 队列。
+- Ghidra 输出必须保留 provenance，使用 `artifact_type='ghidra_decompile'`，不能当作 Hex-Rays ctree 等价结果。
+- `too big function` 不走 Ghidra fallback，优先通过 Hex-Rays `MAX_FUNCSIZE` 慢路径处理。
+
+图 ID 规则：
+- Binary：`sha256(file_bytes)`。
+- Function：`md5(binary_hash + "_" + rva_hex)`。
+- Struct DataSlot：`md5(struct_name + "_" + offset_decimal)`，跨二进制共享。
+- Global DataSlot：`md5(binary_hash + "_GLOBAL_" + rva_hex)`。
+- String：`md5(string_content_utf8)`。
+
+开发约定：
+- 遵守现有模块边界，优先扩展 DTO -> mapper -> model -> exporter 的链路。
+- AI 读取导出文件时优先通过 `ExportArtifact.relative_path` 和 `HAS_ARTIFACT`，不要猜路径。
+- 配置示例不得包含个人用户名或机器专属路径；Ghidra fallback 配置放在 `export.ghidra_fallback`。
+- 本地运行产物、样本和备份目录不要纳入代码改动。

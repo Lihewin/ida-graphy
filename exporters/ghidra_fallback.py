@@ -1,6 +1,5 @@
 """Ghidra fallback exporter for functions Hex-Rays cannot decompile."""
 
-import hashlib
 import logging
 import os
 import shutil
@@ -9,6 +8,8 @@ import tempfile
 from typing import Dict, List
 
 from core.models import GraphData, GhidraFallbackItem
+
+from .artifact_utils import artifact_record, sanitize_filename
 
 logger = logging.getLogger(__name__)
 
@@ -71,28 +72,61 @@ def export_ghidra_fallbacks(
 
     artifacts: List[Dict[str, str]] = []
     for item in queue:
-        filename = f"{item.function_uid}_{_sanitize_filename(item.name)}.c"
+        filename = f"{item.function_uid}_{sanitize_filename(item.name)}.c"
         filepath = os.path.join(export_dir, filename)
         if not os.path.exists(filepath):
-            artifacts.append(_artifact(item, output_dir, filepath, status="failed", error="Ghidra did not produce output"))
+            artifacts.append(
+                artifact_record(
+                    output_dir,
+                    owner_id=item.function_uid,
+                    owner_type="Function",
+                    artifact_type="ghidra_decompile",
+                    filepath=filepath,
+                    status="failed",
+                    error="Ghidra did not produce output",
+                )
+            )
             continue
-        artifacts.append(_artifact(item, output_dir, filepath, status="exported", error=item.error))
+        artifacts.append(
+            artifact_record(
+                output_dir,
+                owner_id=item.function_uid,
+                owner_type="Function",
+                artifact_type="ghidra_decompile",
+                filepath=filepath,
+                status="exported",
+                error=item.error,
+            )
+        )
 
     return artifacts
 
 
 def _resolve_analyze_headless(config: Dict) -> str:
-    ghidra_cfg = config.get("ghidra", {}) if config else {}
+    ghidra_cfg = _ghidra_fallback_config(config)
     configured = ghidra_cfg.get("analyze_headless") or ghidra_cfg.get("analyzeHeadless")
     if configured and os.path.exists(configured):
         return configured
 
-    ghidra_home = ghidra_cfg.get("path") or os.environ.get("GHIDRA_HOME") or "/home/zhubj/.local/opt/ghidra"
+    ghidra_home = ghidra_cfg.get("path") or os.environ.get("GHIDRA_HOME") or "/opt/ghidra"
     candidate = os.path.join(ghidra_home, "support", "analyzeHeadless")
     if os.path.exists(candidate):
         return candidate
 
     return shutil.which("analyzeHeadless") or ""
+
+
+def _ghidra_fallback_config(config: Dict) -> Dict:
+    """Return new export-scoped Ghidra fallback config, with legacy fallback."""
+    if not config:
+        return {}
+
+    export_cfg = config.get("export", {})
+    fallback_cfg = export_cfg.get("ghidra_fallback", {})
+    if fallback_cfg:
+        return fallback_cfg
+
+    return config.get("ghidra", {})
 
 
 def _write_queue(path: str, queue: List[GhidraFallbackItem]) -> None:
@@ -213,34 +247,3 @@ public class ExportQueuedFunctions extends GhidraScript {
 '''
     with open(path, "w", encoding="utf-8") as f:
         f.write(script)
-
-
-def _artifact(
-    item: GhidraFallbackItem,
-    output_dir: str,
-    filepath: str,
-    status: str,
-    error: str,
-) -> Dict[str, str]:
-    return {
-        "owner_id": item.function_uid,
-        "owner_type": "Function",
-        "artifact_type": "ghidra_decompile",
-        "path": os.path.relpath(filepath, output_dir).replace("\\", "/"),
-        "hash": _file_sha256(filepath),
-        "status": status,
-        "error": error,
-    }
-
-
-def _file_sha256(filepath: str) -> str:
-    try:
-        with open(filepath, "rb") as f:
-            return hashlib.sha256(f.read()).hexdigest()
-    except Exception:
-        return ""
-
-
-def _sanitize_filename(name: str) -> str:
-    sanitized = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name)
-    return (sanitized or "function")[:100]
