@@ -126,6 +126,19 @@ class RawDataAccess:
 
 
 @dataclass
+class RawGhidraFallback:
+    """Function that must be supplemented by Ghidra after IDA analysis."""
+
+    ea: int
+    name: str
+    size: int
+    reason: str
+    error: str
+    failure_code: int = 0
+    failure_ea: int = 0
+
+
+@dataclass
 class RawBinaryData:
     """Aggregated raw binary data container."""
 
@@ -138,3 +151,4 @@ class RawBinaryData:
     string_refs: List[RawStringRef] = field(default_factory=list)
     imports: List[RawImport] = field(default_factory=list)
     data_accesses: List[RawDataAccess] = field(default_factory=list)
+    ghidra_fallbacks: List[RawGhidraFallback] = field(default_factory=list)

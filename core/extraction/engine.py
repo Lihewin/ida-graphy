@@ -6,6 +6,7 @@ Collects raw DTOs from IDA without generating graph IDs.
 import logging
 import os
 import struct as _struct
+import time
 from typing import Dict, List, Optional
 
 from .raw_data import (
@@ -20,8 +21,7 @@ from .raw_data import (
     RawImport,
     RawDataAccess,
 )
-from .call_analyzer import extract_call_contexts
-from .dataflow import extract_dataflow_with_hexrays
+from .hexrays_harvest import HexraysHarvestResult, harvest_hexrays_ctree
 
 try:
     import ida_funcs
@@ -37,7 +37,20 @@ try:
 except ImportError:
     IDA_AVAILABLE = False
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("ida-graphy")
+
+
+def _log_perf(stage: str, start: float, binary: str, **fields) -> None:
+    elapsed = time.perf_counter() - start
+    extra = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info(
+        "[PERF] stage=%s binary=%s seconds=%.6f%s%s",
+        stage,
+        binary,
+        elapsed,
+        " " if extra else "",
+        extra,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -245,22 +258,67 @@ class ExtractionEngine:
         self._string_ea_set = set()
         self._elf_tag_to_lib: Optional[Dict[str, str]] = None
         self._elf_sym_to_lib: Optional[Dict[str, str]] = None
+        self._hexrays_harvest: Optional[HexraysHarvestResult] = None
 
     def extract(self) -> RawBinaryData:
         """Run full extraction workflow."""
+        total_start = time.perf_counter()
         raw = RawBinaryData()
+        stage_start = time.perf_counter()
         raw.binary_info = self.extract_binary_info()
+        _log_perf("extract.binary_info", stage_start, self.binary_name)
+        stage_start = time.perf_counter()
         raw.functions = self.extract_functions()
+        _log_perf("extract.functions", stage_start, self.binary_name, count=len(raw.functions))
+        stage_start = time.perf_counter()
         raw.strings = self.extract_strings()
+        _log_perf("extract.strings", stage_start, self.binary_name, count=len(raw.strings))
+        stage_start = time.perf_counter()
         raw.globals = self.extract_globals()
+        _log_perf("extract.globals", stage_start, self.binary_name, count=len(raw.globals))
+        stage_start = time.perf_counter()
         raw.struct_members = self.extract_struct_members()
+        _log_perf("extract.struct_members", stage_start, self.binary_name, count=len(raw.struct_members))
+        stage_start = time.perf_counter()
         raw.imports = self.extract_imports()
-        raw.calls = self.extract_calls(raw.functions, {imp.ea for imp in raw.imports})
+        _log_perf("extract.imports", stage_start, self.binary_name, count=len(raw.imports))
+        stage_start = time.perf_counter()
+        self._hexrays_harvest = harvest_hexrays_ctree(
+            raw.functions,
+            raw.binary_info.base_addr if raw.binary_info else ida_nalt.get_imagebase(),
+            enable_dataflow=self.enable_dataflow,
+        )
+        raw.ghidra_fallbacks = list(self._hexrays_harvest.ghidra_fallbacks)
+        _log_perf(
+            "extract.hexrays_harvest",
+            stage_start,
+            self.binary_name,
+            processed=len(self._hexrays_harvest.processed_functions),
+            call_ctx=self._hexrays_harvest.total_call_ctx,
+            data_accesses=len(self._hexrays_harvest.data_accesses),
+            ghidra_fallbacks=len(raw.ghidra_fallbacks),
+        )
+        stage_start = time.perf_counter()
+        raw.calls = self.extract_calls(
+            raw.functions,
+            {imp.ea for imp in raw.imports},
+            self._hexrays_harvest,
+        )
+        _log_perf("extract.calls", stage_start, self.binary_name, count=len(raw.calls))
+        stage_start = time.perf_counter()
         raw.string_refs = self.extract_string_refs(raw.functions)
+        _log_perf("extract.string_refs", stage_start, self.binary_name, count=len(raw.string_refs))
 
         if self.enable_dataflow:
-            raw.data_accesses = self.extract_dataflow(raw.functions, raw.globals)
+            stage_start = time.perf_counter()
+            raw.data_accesses = self.extract_dataflow(
+                raw.functions,
+                raw.globals,
+                self._hexrays_harvest,
+            )
+            _log_perf("extract.dataflow", stage_start, self.binary_name, count=len(raw.data_accesses))
 
+        _log_perf("extract.total", total_start, self.binary_name)
         return raw
 
     def extract_binary_info(self) -> RawBinaryInfo:
@@ -386,18 +444,25 @@ class ExtractionEngine:
 
         return members
 
-    def extract_calls(self, functions: List[RawFunction], import_eas: Optional[set] = None) -> List[RawCall]:
+    def extract_calls(
+        self,
+        functions: List[RawFunction],
+        import_eas: Optional[set] = None,
+        hexrays_harvest: Optional[HexraysHarvestResult] = None,
+    ) -> List[RawCall]:
         """Extract call relationships."""
         calls: List[RawCall] = []
         seen = set()
         func_starts = {f.ea for f in functions}
         import_eas = import_eas or set()
+        if not hexrays_harvest or not hexrays_harvest.processed_functions:
+            raise RuntimeError("Hex-Rays ctree harvest is required for call context extraction")
         (
             call_contexts_by_addr,
             call_contexts_by_pair,
             call_contexts_by_order,
             call_contexts_by_callee,
-        ) = extract_call_contexts(functions)
+        ) = hexrays_harvest.context_indexes()
         call_seq_map = {}
         ctx_hits = 0
         ctx_pair_hits = 0
@@ -590,19 +655,19 @@ class ExtractionEngine:
         self,
         functions: List[RawFunction],
         globals_list: List[RawGlobal],
+        hexrays_harvest: Optional[HexraysHarvestResult] = None,
     ) -> List[RawDataAccess]:
         """Extract dataflow (READS/WRITES) for global variables and struct members.
 
         Strategy:
-        1. Try Hex-Rays ctree analysis first (covers both globals **and**
-           struct members, higher quality).
-        2. Fall back to assembly-level scan when Hex-Rays is unavailable
-           (globals only).
+        Use the mandatory Hex-Rays harvest results produced earlier in
+        ``extract()``. The main extraction flow does not fall back to
+        assembly-level dataflow because that would lose struct semantics.
         """
-        base_addr = ida_nalt.get_imagebase()
+        if not hexrays_harvest or not hexrays_harvest.processed_functions:
+            raise RuntimeError("Hex-Rays ctree harvest is required for dataflow extraction")
 
-        # ---- primary: Hex-Rays ctree analysis ----
-        hexrays_accesses = extract_dataflow_with_hexrays(functions, base_addr)
+        hexrays_accesses = hexrays_harvest.data_accesses
         if hexrays_accesses:
             logger.info(
                 "Using Hex-Rays dataflow: %d accesses (struct=%d, global=%d)",
@@ -610,11 +675,9 @@ class ExtractionEngine:
                 sum(1 for a in hexrays_accesses if a.struct_name is not None),
                 sum(1 for a in hexrays_accesses if a.struct_name is None),
             )
-            return hexrays_accesses
-
-        # ---- fallback: assembly-level scan (globals only) ----
-        logger.info("Falling back to assembly-level dataflow analysis")
-        return self._extract_dataflow_asm(functions, globals_list, base_addr)
+        else:
+            logger.info("Using Hex-Rays dataflow: 0 accesses")
+        return hexrays_accesses
 
     def _extract_dataflow_asm(
         self,
@@ -889,7 +952,29 @@ class ExtractionEngine:
         return "DIRECT"
 
     def _is_import_function(self, func_ea: int, func_obj, func_name: str) -> bool:
-        return bool(func_obj.flags & ida_funcs.FUNC_LIB)
+        seg = ida_segment.getseg(func_ea)
+        if not seg:
+            return False
+
+        try:
+            if seg.type == ida_segment.SEG_XTRN:
+                return True
+        except Exception:
+            pass
+
+        try:
+            seg_name = ida_segment.get_segm_name(seg).lower()
+        except Exception:
+            return False
+
+        return seg_name in {
+            "extern",
+            "external",
+            ".extern",
+            ".external",
+            ".idata",
+            "__imp__",
+        }
 
     def _is_in_import_section(self, ea: int) -> bool:
         seg = ida_segment.getseg(ea)

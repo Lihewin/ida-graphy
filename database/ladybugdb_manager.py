@@ -171,6 +171,7 @@ class LadybugDBManager:
             "CREATE NODE TABLE Function(uid STRING, rva INT64, name STRING, orig_name STRING, size INT64, is_lib BOOLEAN, func_type STRING, signature STRING, complexity INT64, binary_id STRING, binary_name STRING, decompiled_file STRING, pseudocode_hash STRING, PRIMARY KEY(uid));",
             "CREATE NODE TABLE DataSlot(uid STRING, base_type STRING, base_type_orig STRING, offset INT64, size INT64, name STRING, orig_name STRING, is_global BOOLEAN, struct_file STRING, PRIMARY KEY(uid));",
             "CREATE NODE TABLE String(hash STRING, content STRING, orig_name STRING, encoding STRING, PRIMARY KEY(hash));",
+            "CREATE NODE TABLE ExportArtifact(uid STRING, owner_id STRING, owner_type STRING, artifact_type STRING, relative_path STRING, content_hash STRING, binary_id STRING, binary_name STRING, status STRING, error STRING, PRIMARY KEY(uid));",
             # Relationship tables
             "CREATE REL TABLE CONTAINS(FROM Binary TO Function, FROM Binary TO DataSlot, FROM Binary TO String);",
             "CREATE REL TABLE EMBEDS(FROM DataSlot TO DataSlot);",
@@ -179,6 +180,7 @@ class LadybugDBManager:
             "CREATE REL TABLE REFERENCES(FROM Function TO String);",
             "CREATE REL TABLE WRITES(FROM Function TO DataSlot, op_type STRING, loc INT64, const_val STRING);",
             "CREATE REL TABLE READS(FROM Function TO DataSlot, in_condition BOOLEAN, loc INT64, op_type STRING, const_val STRING);",
+            "CREATE REL TABLE HAS_ARTIFACT(FROM Binary TO ExportArtifact, FROM Function TO ExportArtifact, FROM DataSlot TO ExportArtifact);",
         ]
 
         for stmt in statements:
@@ -222,6 +224,7 @@ class LadybugDBManager:
         functions = list(graph_data.functions) + external_funcs
         dataslots = list(graph_data.dataslots)
         strings = list(graph_data.strings)
+        artifacts = list(graph_data.export_artifacts)
 
         csv_opts = "HEADER=false, PARALLEL=false, auto_detect=false"
 
@@ -231,6 +234,7 @@ class LadybugDBManager:
             function_csv = os.path.join(tmp_dir, "Function.csv")
             dataslot_csv = os.path.join(tmp_dir, "DataSlot.csv")
             string_csv = os.path.join(tmp_dir, "String.csv")
+            artifact_csv = os.path.join(tmp_dir, "ExportArtifact.csv")
 
             _write_csv(
                 binary_csv,
@@ -300,6 +304,25 @@ class LadybugDBManager:
                 ),
             )
 
+            _write_csv(
+                artifact_csv,
+                (
+                    (
+                        a.uid,
+                        a.owner_id,
+                        a.owner_type,
+                        a.artifact_type,
+                        a.relative_path,
+                        a.content_hash,
+                        a.binary_id,
+                        a.binary_name,
+                        a.status,
+                        a.error,
+                    )
+                    for a in artifacts
+                ),
+            )
+
             # Relationship CSVs
             contains_fn_csv = os.path.join(tmp_dir, "CONTAINS_Binary_Function.csv")
             contains_ds_csv = os.path.join(tmp_dir, "CONTAINS_Binary_DataSlot.csv")
@@ -312,6 +335,8 @@ class LadybugDBManager:
             func_uids = {f.uid for f in functions}
             dataslot_uids = {d.uid for d in dataslots}
             string_hashes = {s.hash for s in strings}
+            binary_hashes = {b.hash for b in binaries}
+            artifact_uids = {a.uid for a in artifacts}
 
             for edge in graph_data.contains:
                 if edge.to_id in func_uids:
@@ -398,6 +423,27 @@ class LadybugDBManager:
                 ),
             )
 
+            has_artifact_binary_csv = os.path.join(tmp_dir, "HAS_ARTIFACT_Binary.csv")
+            has_artifact_function_csv = os.path.join(tmp_dir, "HAS_ARTIFACT_Function.csv")
+            has_artifact_dataslot_csv = os.path.join(tmp_dir, "HAS_ARTIFACT_DataSlot.csv")
+            has_artifact_binary_rows: List[Tuple[str, str]] = []
+            has_artifact_function_rows: List[Tuple[str, str]] = []
+            has_artifact_dataslot_rows: List[Tuple[str, str]] = []
+
+            for edge in graph_data.has_artifact:
+                if edge.to_id not in artifact_uids:
+                    continue
+                if edge.from_id in binary_hashes:
+                    has_artifact_binary_rows.append((edge.from_id, edge.to_id))
+                elif edge.from_id in func_uids:
+                    has_artifact_function_rows.append((edge.from_id, edge.to_id))
+                elif edge.from_id in dataslot_uids:
+                    has_artifact_dataslot_rows.append((edge.from_id, edge.to_id))
+
+            _write_csv(has_artifact_binary_csv, has_artifact_binary_rows)
+            _write_csv(has_artifact_function_csv, has_artifact_function_rows)
+            _write_csv(has_artifact_dataslot_csv, has_artifact_dataslot_rows)
+
             # Configure file search path (best-effort; absolute paths still work)
             try:
                 self.execute(f"CALL file_search_path={_cypher_str(tmp_dir)};")
@@ -410,6 +456,7 @@ class LadybugDBManager:
             self.execute(f"COPY Function FROM {_cypher_str(function_csv)} ({csv_opts});")
             self.execute(f"COPY DataSlot FROM {_cypher_str(dataslot_csv)} ({csv_opts});")
             self.execute(f"COPY String FROM {_cypher_str(string_csv)} ({csv_opts});")
+            self.execute(f"COPY ExportArtifact FROM {_cypher_str(artifact_csv)} ({csv_opts});")
 
             # COPY relationships
             # CONTAINS is multi FROM-TO; specify which child table to load
@@ -438,8 +485,20 @@ class LadybugDBManager:
                 self.execute(f"COPY WRITES FROM {_cypher_str(writes_csv)} ({csv_opts});")
             if graph_data.reads:
                 self.execute(f"COPY READS FROM {_cypher_str(reads_csv)} ({csv_opts});")
+            if has_artifact_binary_rows:
+                self.execute(
+                    f"COPY HAS_ARTIFACT FROM {_cypher_str(has_artifact_binary_csv)} (from='Binary', to='ExportArtifact', {csv_opts});"
+                )
+            if has_artifact_function_rows:
+                self.execute(
+                    f"COPY HAS_ARTIFACT FROM {_cypher_str(has_artifact_function_csv)} (from='Function', to='ExportArtifact', {csv_opts});"
+                )
+            if has_artifact_dataslot_rows:
+                self.execute(
+                    f"COPY HAS_ARTIFACT FROM {_cypher_str(has_artifact_dataslot_csv)} (from='DataSlot', to='ExportArtifact', {csv_opts});"
+                )
 
-        node_count = len(binaries) + len(functions) + len(dataslots) + len(strings)
+        node_count = len(binaries) + len(functions) + len(dataslots) + len(strings) + len(artifacts)
         rel_count = (
             len(graph_data.contains)
             + len(graph_data.embeds)
@@ -448,6 +507,7 @@ class LadybugDBManager:
             + len(graph_data.references)
             + len(graph_data.writes)
             + len(graph_data.reads)
+            + len(graph_data.has_artifact)
         )
 
         return {

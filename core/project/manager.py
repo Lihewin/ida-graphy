@@ -23,6 +23,19 @@ class ProjectError(Exception):
     pass
 
 
+def _get_ida_open_path(binary_path: str) -> str:
+    """Return an IDA database path for a raw binary when a sidecar exists."""
+    if binary_path.endswith((".i64", ".idb")):
+        return binary_path
+
+    for suffix in (".i64", ".idb"):
+        candidate = binary_path + suffix
+        if os.path.exists(candidate):
+            return candidate
+
+    return binary_path
+
+
 class ProjectManager:
     """项目管理器"""
 
@@ -283,7 +296,8 @@ class ProjectManager:
                 with open(binary.path, "rb") as f:
                     binary_content = f.read()
 
-                result = idalib.open_database(binary.path, True)
+                ida_open_path = _get_ida_open_path(binary.path)
+                result = idalib.open_database(ida_open_path, True)
                 if result != 0:
                     stats["errors"].append({"file": binary.path, "error": f"IDA无法打开文件: {result}"})
                     continue

@@ -52,6 +52,20 @@ from database.ladybugdb_manager import LadybugDBManager, LadybugDBError
 logger = logging.getLogger('ida-graphy')
 
 
+def log_perf(stage: str, start: float, binary: Optional[str] = None, **fields) -> None:
+    """Emit a structured performance timing line."""
+    elapsed = time.perf_counter() - start
+    extra = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info(
+        "[PERF] stage=%s binary=%s seconds=%.6f%s%s",
+        stage,
+        binary or "-",
+        elapsed,
+        " " if extra else "",
+        extra,
+    )
+
+
 def setup_logging(verbose: bool = False, log_file: Optional[str] = None):
     """配置日志系统"""
     level = logging.DEBUG if verbose else logging.INFO
@@ -177,6 +191,19 @@ def ensure_ida_available(config: Dict) -> bool:
         return False
 
 
+def get_ida_open_path(binary_path: str) -> str:
+    """Return an IDA database path for a raw binary when a sidecar exists."""
+    if binary_path.endswith((".i64", ".idb")):
+        return binary_path
+
+    for suffix in (".i64", ".idb"):
+        candidate = binary_path + suffix
+        if os.path.exists(candidate):
+            return candidate
+
+    return binary_path
+
+
 def analyze_project_binaries(project, config: Dict[str, Any]):
     """分析项目中的二进制文件
     
@@ -218,9 +245,11 @@ def analyze_project_binaries(project, config: Dict[str, Any]):
     
     exporter = ExportManager(config, project)
     enable_file_export = config.get("export", {}).get("enable_file_export", False)
+    project_start = time.perf_counter()
 
     for i, binary in enumerate(project.binaries, 1):
         logger.info(f"[{i}/{len(project.binaries)}] 分析文件: {binary.name}")
+        binary_start = time.perf_counter()
         
         try:
             # 检查文件是否存在
@@ -229,17 +258,24 @@ def analyze_project_binaries(project, config: Dict[str, Any]):
                 continue
                 
             # 读取二进制内容
+            stage_start = time.perf_counter()
             with open(binary.path, 'rb') as f:
                 binary_content = f.read()
+            log_perf("binary.read", stage_start, binary.name, bytes=len(binary_content))
             
-            # 使用idalib打开数据库
-            logger.info(f"使用IDA分析: {binary.path}")
-            result = idalib.open_database(binary.path, True)
+            # 使用旁路 IDA 数据库加速大二进制分析，同时保留原始文件用于哈希与 ELF 元信息。
+            ida_open_path = get_ida_open_path(binary.path)
+            logger.info(f"使用IDA分析: {ida_open_path}")
+            stage_start = time.perf_counter()
+            result = idalib.open_database(ida_open_path, True)
+            log_perf("ida.open_database", stage_start, binary.name, result=result)
             
             if result == 0:
                 # 等待自动分析完成
                 logger.info("等待IDA自动分析完成...")
+                stage_start = time.perf_counter()
                 ida_auto.auto_wait()
+                log_perf("ida.auto_wait", stage_start, binary.name)
                 
                 # 执行提取与映射
                 logger.info("提取原始数据...")
@@ -248,22 +284,64 @@ def analyze_project_binaries(project, config: Dict[str, Any]):
 
                 enable_dataflow = config.get('analysis', {}).get('enable_dataflow', True)
                 engine = ExtractionEngine(binary.path, enable_dataflow=enable_dataflow)
+                stage_start = time.perf_counter()
                 raw_data = engine.extract()
+                log_perf(
+                    "engine.extract",
+                    stage_start,
+                    binary.name,
+                    functions=len(raw_data.functions),
+                    calls=len(raw_data.calls),
+                    data_accesses=len(raw_data.data_accesses),
+                )
                 
                 logger.info("映射为图数据...")
+                stage_start = time.perf_counter()
                 mapper = GraphMapper(binary_content=binary_content)
                 graph_data = mapper.map(raw_data)
+                log_perf(
+                    "graph.map",
+                    stage_start,
+                    binary.name,
+                    nodes=graph_data.node_count(),
+                    edges=graph_data.edge_count(),
+                )
 
                 if enable_file_export:
+                    stage_start = time.perf_counter()
                     exporter.export_files(binary.path, graph_data)
-                
+                    log_perf("file.export", stage_start, binary.name)
+
+                # Close IDA before launching Ghidra fallback. Both tools are heavy
+                # analyzers and should not compete for the same binary state.
+                stage_start = time.perf_counter()
+                idalib.close_database()
+                log_perf("ida.close_database", stage_start, binary.name)
+
+                if graph_data.ghidra_fallbacks:
+                    stage_start = time.perf_counter()
+                    fallback_artifacts = exporter.export_ghidra_fallbacks(binary.path, graph_data)
+                    log_perf(
+                        "ghidra.fallback",
+                        stage_start,
+                        binary.name,
+                        queued=len(graph_data.ghidra_fallbacks),
+                        artifacts=len(fallback_artifacts),
+                    )
+
                 # 合并到总图数据中
+                stage_start = time.perf_counter()
                 merged_graph.merge(graph_data)
+                log_perf(
+                    "graph.merge",
+                    stage_start,
+                    binary.name,
+                    total_nodes=merged_graph.node_count(),
+                    total_edges=merged_graph.edge_count(),
+                )
                 
                 logger.info(f"完成分析: {binary.name} - 节点:{graph_data.node_count()}, 边:{graph_data.edge_count()}")
-                
-                # 关闭数据库
-                idalib.close_database()
+                log_perf("binary.total", binary_start, binary.name)
                 
             else:
                 logger.error(f"IDA无法打开文件: {binary.path} (错误码: {result})")
@@ -283,6 +361,13 @@ def analyze_project_binaries(project, config: Dict[str, Any]):
             merged_graph.functions,
             merged_graph.links_to,
             binary_names,
+        )
+        log_perf(
+            "project.analyze",
+            project_start,
+            project.name,
+            nodes=merged_graph.node_count(),
+            edges=merged_graph.edge_count(),
         )
         logger.info(f"✅ 项目分析完成 - 总节点: {merged_graph.node_count()}, 总边: {merged_graph.edge_count()}")
         return merged_graph
@@ -577,7 +662,15 @@ def cmd_project_sync(args, config: Dict) -> int:
         # 导出到 LadybugDB（全量重建 graph.lbug）
         try:
             exporter = ExportManager(config, project)
+            stage_start = time.perf_counter()
             stats = exporter.export_to_ladybugdb(graph_data)
+            log_perf(
+                "ladybugdb.export",
+                stage_start,
+                project.name,
+                nodes=stats.get('nodes_created', 0),
+                relationships=stats.get('relationships_created', 0),
+            )
             db_path = os.path.join(str(project_manager._get_project_dir(project.name)), project.graph_db_file)
 
             print("✅ 同步完成:")

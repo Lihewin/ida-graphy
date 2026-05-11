@@ -193,6 +193,52 @@ else:
 
         def __init__(self):
             self.call_contexts = []
+            self.expr_count = 0
+            self.call_count = 0
+            self.insn_count = 0
+            self.if_count = 0
+            self.switch_count = 0
+            self.loop_count = 0
+            self.insn_op_counts = {}
+
+
+def analyze_call_context_cfunc(cfunc: Any) -> CallContextVisitor:
+    """Run call-context analysis on an already decompiled function."""
+    visitor = CallContextVisitor()
+    visitor.apply_to(cfunc.body, None)
+    return visitor
+
+
+def merge_call_contexts(
+    func_ea: int,
+    call_contexts: List[Dict[str, Any]],
+    contexts_by_addr: Dict[int, Dict[str, Any]],
+    contexts_by_pair: Dict[Tuple[int, int], Dict[str, Any]],
+    contexts_by_order: Dict[Tuple[int, int], Dict[str, Any]],
+    contexts_by_callee: Dict[Tuple[int, int], List[Dict[str, Any]]],
+) -> Tuple[int, int]:
+    """Merge one function's call contexts into the shared lookup indexes."""
+    call_addr_present = 0
+    call_addr_missing = 0
+
+    for call_ctx in call_contexts:
+        call_addr = call_ctx.get("call_addr")
+        if call_addr is not None:
+            contexts_by_addr[call_addr] = call_ctx
+            call_addr_present += 1
+        else:
+            call_addr_missing += 1
+
+        callee_ea = call_ctx.get("callee_ea")
+        if callee_ea is not None:
+            contexts_by_pair[(func_ea, callee_ea)] = call_ctx
+            contexts_by_callee.setdefault((func_ea, callee_ea), []).append(call_ctx)
+
+        seq_order = call_ctx.get("seq_order")
+        if seq_order is not None:
+            contexts_by_order[(func_ea, seq_order)] = call_ctx
+
+    return call_addr_present, call_addr_missing
 
 
 def extract_call_contexts(
@@ -256,8 +302,7 @@ def extract_call_contexts(
                 decompile_failures += 1
                 continue
             decompiled += 1
-            visitor = CallContextVisitor()
-            visitor.apply_to(cfunc.body, None)
+            visitor = analyze_call_context_cfunc(cfunc)
             total_exprs += visitor.expr_count
             total_calls += visitor.call_count
             total_insns += visitor.insn_count
@@ -267,20 +312,16 @@ def extract_call_contexts(
             total_call_ctx += len(visitor.call_contexts)
             for op, count in visitor.insn_op_counts.items():
                 insn_op_counts[op] = insn_op_counts.get(op, 0) + count
-            for call_ctx in visitor.call_contexts:
-                call_addr = call_ctx.get("call_addr")
-                if call_addr is not None:
-                    contexts_by_addr[call_addr] = call_ctx
-                    call_addr_present += 1
-                else:
-                    call_addr_missing += 1
-                callee_ea = call_ctx.get("callee_ea")
-                if callee_ea is not None:
-                    contexts_by_pair[(func.ea, callee_ea)] = call_ctx
-                    contexts_by_callee.setdefault((func.ea, callee_ea), []).append(call_ctx)
-                seq_order = call_ctx.get("seq_order")
-                if seq_order is not None:
-                    contexts_by_order[(func.ea, seq_order)] = call_ctx
+            present, missing = merge_call_contexts(
+                func.ea,
+                visitor.call_contexts,
+                contexts_by_addr,
+                contexts_by_pair,
+                contexts_by_order,
+                contexts_by_callee,
+            )
+            call_addr_present += present
+            call_addr_missing += missing
         except Exception as exc:
             decompile_failures += 1
             logger.debug("Call context analysis failed at 0x%X: %s", func.ea, exc)

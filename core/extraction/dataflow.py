@@ -6,9 +6,9 @@ global variables and structure members.  The visitor produces
 offsets – no UIDs or normalization is done here (that belongs to the
 mapping layer).
 
-When Hex-Rays is unavailable the public entry point
-:func:`extract_dataflow_with_hexrays` gracefully returns an empty list so
-that the caller can fall back to a simpler assembly-level scan.
+The main extraction flow calls :func:`analyze_dataflow_cfunc` from the shared
+Hex-Rays harvest path so dataflow and call-context analysis use the same
+decompiled function.
 """
 
 import logging
@@ -23,6 +23,7 @@ try:
 
     HEXRAYS_AVAILABLE = True
 except ImportError:
+    ida_hexrays = None
     HEXRAYS_AVAILABLE = False
 
 from .raw_data import RawDataAccess, RawFunction
@@ -107,6 +108,10 @@ if HEXRAYS_AVAILABLE:
         def get_accesses(self) -> List[RawDataAccess]:
             return self.accesses
 
+        def _visit_child(self, item: object) -> None:
+            if item:
+                self.apply_to(item, None)
+
         # -- visitor callbacks ----------------------------------------------
 
         def visit_insn(self, insn: "ida_hexrays.cinsn_t") -> int:  # noqa: C901
@@ -116,22 +121,22 @@ if HEXRAYS_AVAILABLE:
             if op == ida_hexrays.cit_if:
                 self._cond_depth += 1
                 if insn.cif and insn.cif.expr:
-                    insn.cif.expr.accept(self)
+                    self._visit_child(insn.cif.expr)
                 self._cond_depth -= 1
                 if insn.cif.ithen:
-                    insn.cif.ithen.accept(self)
+                    self._visit_child(insn.cif.ithen)
                 if insn.cif.ielse:
-                    insn.cif.ielse.accept(self)
+                    self._visit_child(insn.cif.ielse)
                 return 1  # prevent automatic child traversal
 
             if op == ida_hexrays.cit_switch:
                 self._cond_depth += 1
                 if insn.cswitch and insn.cswitch.expr:
-                    insn.cswitch.expr.accept(self)
+                    self._visit_child(insn.cswitch.expr)
                 self._cond_depth -= 1
                 if insn.cswitch and insn.cswitch.cases:
                     for case in insn.cswitch.cases:
-                        case.accept(self)
+                        self._visit_child(case)
                 return 1
 
             if op in (ida_hexrays.cit_while, ida_hexrays.cit_do):
@@ -143,11 +148,11 @@ if HEXRAYS_AVAILABLE:
                     self._cond_depth += 1
                     expr = getattr(loop, "expr", None)
                     if expr:
-                        expr.accept(self)
+                        self._visit_child(expr)
                     self._cond_depth -= 1
                     body = getattr(loop, "body", None)
                     if body:
-                        body.accept(self)
+                        self._visit_child(body)
                 return 1
 
             if op == ida_hexrays.cit_for:
@@ -155,18 +160,18 @@ if HEXRAYS_AVAILABLE:
                 if cfor:
                     init = getattr(cfor, "init", None)
                     if init:
-                        init.accept(self)
+                        self._visit_child(init)
                     self._cond_depth += 1
                     expr = getattr(cfor, "expr", None)
                     if expr:
-                        expr.accept(self)
+                        self._visit_child(expr)
                     self._cond_depth -= 1
                     step = getattr(cfor, "step", None)
                     if step:
-                        step.accept(self)
+                        self._visit_child(step)
                     body = getattr(cfor, "body", None)
                     if body:
-                        body.accept(self)
+                        self._visit_child(body)
                 return 1
 
             return 0  # default traversal
@@ -325,9 +330,36 @@ if HEXRAYS_AVAILABLE:
             return ea - self.base_addr
 
 
+else:
+
+    def _init_hexrays() -> bool:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
+
+
+def init_hexrays() -> bool:
+    """Initialize Hex-Rays if available."""
+    if not HEXRAYS_AVAILABLE:
+        return False
+    return _init_hexrays()
+
+
+def analyze_dataflow_cfunc(
+    func_ea: int,
+    cfunc: object,
+    base_addr: int,
+) -> List[RawDataAccess]:
+    """Run dataflow analysis on an already decompiled function."""
+    if not HEXRAYS_AVAILABLE:
+        return []
+
+    visitor = _DataFlowVisitor(func_ea, base_addr)
+    visitor.apply_to(cfunc.body, None)
+    return visitor.get_accesses()
 
 
 def extract_dataflow_with_hexrays(
@@ -336,8 +368,8 @@ def extract_dataflow_with_hexrays(
 ) -> List[RawDataAccess]:
     """Analyse every *function* with Hex-Rays and return data-access DTOs.
 
-    If Hex-Rays is not available or fails to initialise an empty list is
-    returned so that the caller can fall back to assembly-level analysis.
+    This compatibility entry point is not used by the main extraction flow,
+    which instead consumes the shared cfunc harvest.
 
     Args:
         functions: Functions extracted by :class:`ExtractionEngine`.
@@ -351,7 +383,7 @@ def extract_dataflow_with_hexrays(
         logger.debug("Hex-Rays not available; skipping dataflow analysis")
         return []
 
-    if not _init_hexrays():
+    if not init_hexrays():
         logger.warning("Hex-Rays init failed; skipping dataflow analysis")
         return []
 
@@ -371,9 +403,7 @@ def extract_dataflow_with_hexrays(
                 failures += 1
                 continue
 
-            visitor = _DataFlowVisitor(func.ea, base_addr)
-            visitor.apply_to(cfunc.body, None)
-            accesses.extend(visitor.get_accesses())
+            accesses.extend(analyze_dataflow_cfunc(func.ea, cfunc, base_addr))
             decompiled += 1
 
         except ida_hexrays.DecompilationFailure:

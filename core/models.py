@@ -198,6 +198,52 @@ class StringNode:
         }
 
 
+@dataclass
+class ExportArtifactNode:
+    """
+    Exported file or export status attached to a graph node.
+
+    Label: :ExportArtifact
+
+    Attributes:
+        uid: Primary key for this artifact record.
+        owner_id: ID of the owning Binary/Function/DataSlot-like entity.
+        owner_type: Owner node kind.
+        artifact_type: File category such as decompile, structure, strings.
+        relative_path: Path relative to the project directory.
+        content_hash: SHA256 of the exported file content when available.
+        binary_id: Parent binary hash for fast filtering.
+        binary_name: Parent binary filename.
+        status: exported, failed, or skipped.
+        error: Failure reason when status is failed.
+    """
+    uid: str
+    owner_id: str
+    owner_type: Literal['Binary', 'Function', 'DataSlot']
+    artifact_type: str
+    relative_path: str
+    content_hash: str = ""
+    binary_id: str = ""
+    binary_name: str = ""
+    status: Literal['exported', 'failed', 'skipped'] = 'exported'
+    error: str = ""
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for export."""
+        return {
+            'uid': self.uid,
+            'owner_id': self.owner_id,
+            'owner_type': self.owner_type,
+            'artifact_type': self.artifact_type,
+            'relative_path': self.relative_path,
+            'content_hash': self.content_hash,
+            'binary_id': self.binary_id,
+            'binary_name': self.binary_name,
+            'status': self.status,
+            'error': self.error,
+        }
+
+
 # ============================================================================
 # Edge Definitions
 # ============================================================================
@@ -430,6 +476,43 @@ class ReadsEdge:
         }
 
 
+@dataclass
+class HasArtifactEdge:
+    """
+    HAS_ARTIFACT edge - Connects a graph node to an exported file artifact.
+
+    Paths:
+        - (:Binary) -[:HAS_ARTIFACT]-> (:ExportArtifact)
+        - (:Function) -[:HAS_ARTIFACT]-> (:ExportArtifact)
+        - (:DataSlot) -[:HAS_ARTIFACT]-> (:ExportArtifact)
+    """
+    from_id: str
+    to_id: str
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for export."""
+        return {
+            'from_id': self.from_id,
+            'to_id': self.to_id,
+        }
+
+
+@dataclass
+class GhidraFallbackItem:
+    """Function that needs Ghidra supplementation after IDA analysis."""
+
+    function_uid: str
+    binary_id: str
+    binary_name: str
+    rva: int
+    name: str
+    size: int
+    reason: str
+    error: str
+    failure_code: int = 0
+    failure_rva: int = 0
+
+
 # ============================================================================
 # Helper Functions
 # ============================================================================
@@ -466,6 +549,7 @@ class GraphData:
     functions: List[FunctionNode] = field(default_factory=list)
     dataslots: List[DataSlotNode] = field(default_factory=list)
     strings: List[StringNode] = field(default_factory=list)
+    export_artifacts: List[ExportArtifactNode] = field(default_factory=list)
     
     # 边集�?
     contains: List[ContainsEdge] = field(default_factory=list)
@@ -475,17 +559,21 @@ class GraphData:
     references: List[ReferencesEdge] = field(default_factory=list)
     writes: List[WritesEdge] = field(default_factory=list)
     reads: List[ReadsEdge] = field(default_factory=list)    
+    has_artifact: List[HasArtifactEdge] = field(default_factory=list)
     # 元数据（用于符号解析）
     binary_name: Optional[str] = None    
+    ghidra_fallbacks: List[GhidraFallbackItem] = field(default_factory=list)
     def node_count(self):
         """返回总节点数"""
         return (len(self.binaries) + len(self.functions) + 
-                len(self.dataslots) + len(self.strings))
+                len(self.dataslots) + len(self.strings) +
+                len(self.export_artifacts))
     
     def edge_count(self):
         """返回总边数"""
         return (len(self.contains) + len(self.embeds) + len(self.calls) +
-            len(self.links_to) + len(self.references) + len(self.writes) + len(self.reads))
+            len(self.links_to) + len(self.references) + len(self.writes) +
+            len(self.reads) + len(self.has_artifact))
     
     def merge(self, other: 'GraphData') -> None:
         """合并另一个GraphData对象到当前对象中
@@ -498,6 +586,7 @@ class GraphData:
         existing_function_uids = {f.uid for f in self.functions}
         existing_dataslot_uids = {d.uid for d in self.dataslots}
         existing_string_hashes = {s.hash for s in self.strings}
+        existing_artifact_uids = {a.uid for a in self.export_artifacts}
         
         # 添加新的节点
         for binary in other.binaries:
@@ -519,6 +608,11 @@ class GraphData:
             if string.hash not in existing_string_hashes:
                 self.strings.append(string)
                 existing_string_hashes.add(string.hash)
+
+        for artifact in other.export_artifacts:
+            if artifact.uid not in existing_artifact_uids:
+                self.export_artifacts.append(artifact)
+                existing_artifact_uids.add(artifact.uid)
         
         # 合并边（避免重复）
         existing_contains = {(c.from_id, c.to_id) for c in self.contains}
@@ -528,6 +622,7 @@ class GraphData:
         existing_references = {(r.from_id, r.to_id) for r in self.references}
         existing_writes = {(w.from_id, w.to_id) for w in self.writes}
         existing_reads = {(r.from_id, r.to_id) for r in self.reads}
+        existing_has_artifact = {(a.from_id, a.to_id) for a in self.has_artifact}
         
         for edge in other.contains:
             if (edge.from_id, edge.to_id) not in existing_contains:
@@ -575,6 +670,21 @@ class GraphData:
             if (edge.from_id, edge.to_id) not in existing_reads:
                 self.reads.append(edge)
                 existing_reads.add((edge.from_id, edge.to_id))
+
+        for edge in other.has_artifact:
+            if (edge.from_id, edge.to_id) not in existing_has_artifact:
+                self.has_artifact.append(edge)
+                existing_has_artifact.add((edge.from_id, edge.to_id))
+
+        existing_fallbacks = {
+            (item.binary_id, item.function_uid, item.reason)
+            for item in self.ghidra_fallbacks
+        }
+        for item in other.ghidra_fallbacks:
+            key = (item.binary_id, item.function_uid, item.reason)
+            if key not in existing_fallbacks:
+                self.ghidra_fallbacks.append(item)
+                existing_fallbacks.add(key)
 
 
 # ============================================================================

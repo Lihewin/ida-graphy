@@ -9,6 +9,12 @@ ida:
   # Path to idalib Python bindings (usually under IDA installation)
   idalib_python: "C:\\Program Files\\IDA Professional 9.2\\idalib\\python"
 
+# Ghidra fallback settings
+ghidra:
+  # Used only for functions Hex-Rays rejects due to hard limits such as
+  # "stack frame is too big".
+  path: "/home/zhubj/.local/opt/ghidra"
+
 # Export Settings
 export:
   # Enable file export (decompiled code, structures, etc.)

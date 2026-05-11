@@ -9,7 +9,7 @@ import os
 import hashlib
 import logging
 from typing import Dict, List, Optional, Tuple, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 try:
     import ida_hexrays
@@ -33,6 +33,7 @@ class ExportResult:
     failed_count: int
     file_mapping: Dict[str, Dict[str, str]]  # {uid: {'path': ..., 'hash': ...}}
     failed_items: List[Tuple[str, str]]  # [(uid, error_message)]
+    artifacts: List[Dict[str, str]] = field(default_factory=list)
 
 
 class FileExporter:
@@ -160,13 +161,22 @@ class FileExporter:
         
         file_mapping = {}
         failed_items = []
+        artifacts = []
         success_count = 0
         
         imagebase = ida_nalt.get_imagebase()
         
         self._prepare_call_indexes()
+        ghidra_fallback_uids = {
+            item.function_uid for item in getattr(self.graph_data, "ghidra_fallbacks", [])
+        }
 
         for func_node in self.graph_data.functions:
+            if func_node.func_type == "IMPORT":
+                continue
+            if func_node.uid in ghidra_fallback_uids:
+                continue
+
             func_ea = imagebase + func_node.rva
             
             try:
@@ -208,6 +218,15 @@ class FileExporter:
                         'path': relative_path,
                         'hash': pseudocode_hash
                     }
+                    artifacts.append(
+                        self._artifact_record(
+                            owner_id=func_node.uid,
+                            owner_type="Function",
+                            artifact_type="decompile",
+                            filepath=filepath,
+                            content_hash=content_hash,
+                        )
+                    )
                     success_count += 1
                     continue
 
@@ -221,6 +240,15 @@ class FileExporter:
                     'path': relative_path,
                     'hash': pseudocode_hash
                 }
+                artifacts.append(
+                    self._artifact_record(
+                        owner_id=func_node.uid,
+                        owner_type="Function",
+                        artifact_type="decompile",
+                        filepath=filepath,
+                        content_hash=content_hash,
+                    )
+                )
                 
                 success_count += 1
                 
@@ -231,11 +259,30 @@ class FileExporter:
         
         # Write failed log
         if failed_items:
-            self._write_failed_log(failed_items)
+            failed_log_path = self._write_failed_log(failed_items)
+            for uid, error in failed_items:
+                artifacts.append(
+                    self._artifact_record(
+                        owner_id=uid,
+                        owner_type="Function",
+                        artifact_type="decompile_failures",
+                        filepath=failed_log_path,
+                        status="failed",
+                        error=error,
+                    )
+                )
         
         logger.info(f"Decompiled functions: {success_count} succeeded, {len(failed_items)} failed")
+        if failed_items:
+            samples = "; ".join(
+                f"{uid}: {error}" for uid, error in failed_items[:16]
+            )
+            raise RuntimeError(
+                "Hex-Rays failed to export decompiled pseudocode for meaningful functions; "
+                f"failures={len(failed_items)}; samples={samples}"
+            )
         
-        return ExportResult(success_count, len(failed_items), file_mapping, failed_items)
+        return ExportResult(success_count, len(failed_items), file_mapping, failed_items, artifacts)
     
     def export_structures(self) -> ExportResult:
         """
@@ -249,6 +296,7 @@ class FileExporter:
         
         file_mapping = {}
         failed_items = []
+        artifacts = []
         success_count = 0
         
         summary_path = os.path.join(self.struct_dir, '_all_structures.txt')
@@ -293,10 +341,20 @@ class FileExporter:
                             summary_file.write("\n\n")
                             
                             relative_path = os.path.relpath(filepath, self.output_dir).replace('\\', '/')
+                            struct_hash = hashlib.sha256(struct_def.encode('utf-8')).hexdigest()
                             file_mapping[type_name] = {
                                 'path': relative_path,
-                                'hash': hashlib.sha256(struct_def.encode('utf-8')).hexdigest()
+                                'hash': struct_hash
                             }
+                            artifacts.append(
+                                self._artifact_record(
+                                    owner_id=type_name,
+                                    owner_type="DataSlot",
+                                    artifact_type="structure",
+                                    filepath=filepath,
+                                    content_hash=struct_hash,
+                                )
+                            )
                             
                             success_count += 1
                     
@@ -305,15 +363,23 @@ class FileExporter:
             finally:
                 if summary_file is not None:
                     summary_file.close()
+                    artifacts.append(
+                        self._artifact_record(
+                            owner_id=self.binary_name,
+                            owner_type="Binary",
+                            artifact_type="structure_summary",
+                            filepath=summary_path,
+                        )
+                    )
         
         except Exception as e:
             logger.error(f"Failed to export structures: {e}")
         
         logger.info(f"Exported structures: {success_count} succeeded, {len(failed_items)} failed")
         
-        return ExportResult(success_count, len(failed_items), file_mapping, failed_items)
+        return ExportResult(success_count, len(failed_items), file_mapping, failed_items, artifacts)
     
-    def export_strings_table(self) -> Optional[str]:
+    def export_strings_table(self) -> Optional[Dict[str, str]]:
         """
         Export strings table with addresses and metadata.
         
@@ -349,13 +415,18 @@ class FileExporter:
             
             relative_path = os.path.relpath(strings_path, self.output_dir).replace('\\', '/')
             logger.info(f"Exported strings table: {relative_path}")
-            return relative_path
+            return self._artifact_record(
+                owner_id=self.binary_name,
+                owner_type="Binary",
+                artifact_type="strings",
+                filepath=strings_path,
+            )
         
         except Exception as e:
             logger.error(f"Failed to export strings table: {e}")
             return None
     
-    def export_imports_table(self) -> Optional[str]:
+    def export_imports_table(self) -> Optional[Dict[str, str]]:
         """
         Export import address table (IAT).
         
@@ -389,13 +460,18 @@ class FileExporter:
             
             relative_path = os.path.relpath(imports_path, self.output_dir).replace('\\', '/')
             logger.info(f"Exported imports table: {relative_path}")
-            return relative_path
+            return self._artifact_record(
+                owner_id=self.binary_name,
+                owner_type="Binary",
+                artifact_type="imports",
+                filepath=imports_path,
+            )
         
         except Exception as e:
             logger.error(f"Failed to export imports table: {e}")
             return None
     
-    def export_exports_table(self) -> Optional[str]:
+    def export_exports_table(self) -> Optional[Dict[str, str]]:
         """
         Export export address table (EAT).
         
@@ -424,7 +500,12 @@ class FileExporter:
             
             relative_path = os.path.relpath(exports_path, self.output_dir).replace('\\', '/')
             logger.info(f"Exported exports table: {relative_path}")
-            return relative_path
+            return self._artifact_record(
+                owner_id=self.binary_name,
+                owner_type="Binary",
+                artifact_type="exports",
+                filepath=exports_path,
+            )
         
         except Exception as e:
             logger.error(f"Failed to export exports table: {e}")
@@ -507,6 +588,35 @@ class FileExporter:
         except Exception as e:
             logger.debug(f"Failed to read {filepath} for hash check: {e}")
             return False
+
+    def _artifact_record(
+        self,
+        owner_id: str,
+        owner_type: str,
+        artifact_type: str,
+        filepath: str,
+        status: str = "exported",
+        error: str = "",
+        content_hash: Optional[str] = None,
+    ) -> Dict[str, str]:
+        """Return a normalized artifact manifest row for ExportManager."""
+        return {
+            "owner_id": owner_id,
+            "owner_type": owner_type,
+            "artifact_type": artifact_type,
+            "path": os.path.relpath(filepath, self.output_dir).replace("\\", "/"),
+            "hash": content_hash if content_hash is not None else self._file_sha256(filepath),
+            "status": status,
+            "error": error,
+        }
+
+    @staticmethod
+    def _file_sha256(filepath: str) -> str:
+        try:
+            with open(filepath, "rb") as f:
+                return hashlib.sha256(f.read()).hexdigest()
+        except Exception:
+            return ""
     
     def _format_structure_definition(self, tif: Any, type_name: str) -> Optional[str]:
         """Format structure definition as C header using IDA 9.x generator API."""
@@ -564,7 +674,7 @@ class FileExporter:
         
         return sanitized
     
-    def _write_failed_log(self, failed_items: List[Tuple[str, str]]):
+    def _write_failed_log(self, failed_items: List[Tuple[str, str]]) -> str:
         """Write failed decompilations to log file."""
         failed_log_path = os.path.join(self.decompile_dir, '_failed.txt')
         
@@ -577,3 +687,5 @@ class FileExporter:
                 f.write(f"UID: {uid}\n")
                 f.write(f"Error: {error}\n")
                 f.write("-" * 80 + "\n")
+
+        return failed_log_path

@@ -18,6 +18,7 @@ from core.models import (
     ReferencesEdge,
     WritesEdge,
     ReadsEdge,
+    GhidraFallbackItem,
 )
 from core.extraction.raw_data import (
     RawBinaryData,
@@ -166,6 +167,23 @@ class GraphMapper:
                     graph.writes.append(edge)
                 else:
                     graph.reads.append(edge)
+
+        for fallback in raw_data.ghidra_fallbacks:
+            rva = fallback.ea - base_addr
+            graph.ghidra_fallbacks.append(
+                GhidraFallbackItem(
+                    function_uid=self.id_gen.get_function_id(rva),
+                    binary_id=self.id_gen.get_binary_id(),
+                    binary_name=binary_name,
+                    rva=rva,
+                    name=fallback.name,
+                    size=fallback.size,
+                    reason=fallback.reason,
+                    error=fallback.error,
+                    failure_code=fallback.failure_code,
+                    failure_rva=(fallback.failure_ea - base_addr) if fallback.failure_ea else 0,
+                )
+            )
 
         return graph
 
