@@ -72,7 +72,9 @@ class TestNodeModels(unittest.TestCase):
             orig_name="test.exe",
             base_addr=0x140000000,
             arch="x86_64",
-            compile_ts=1234567890
+            compile_ts=1234567890,
+            export_manifest_file="exports/test.exe/_export_manifest.json",
+            export_manifest_hash="manifest_hash",
         )
         
         data = binary.to_dict()
@@ -83,6 +85,8 @@ class TestNodeModels(unittest.TestCase):
         self.assertEqual(data['base_addr'], 0x140000000)
         self.assertEqual(data['arch'], "x86_64")
         self.assertEqual(data['compile_ts'], 1234567890)
+        self.assertEqual(data['export_manifest_file'], "exports/test.exe/_export_manifest.json")
+        self.assertEqual(data['export_manifest_hash'], "manifest_hash")
     
     def test_function_node_creation(self):
         """Test FunctionNode instantiation."""

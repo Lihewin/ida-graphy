@@ -36,8 +36,9 @@
 
 - LadybugDB 文件写入（`graph.lbug`）
 - 可选文件导出（伪 C/结构体/表）
-- `ExportArtifact` / `HAS_ARTIFACT` 回填，让 AI 直接通过图查询 artifact 相对路径
-- IDA 数据库关闭后按 `export.ghidra_fallback` 配置运行 Ghidra fallback，并把 `ghidra_decompile` artifact 挂回对应函数
+- 将导出路径直接回填到 `Function.decompiled_file` / `DataSlot.struct_file`
+- 生成 `_export_manifest.json`，并把 manifest 路径和文件哈希写入 `Binary`
+- IDA 数据库关闭后按 `export.ghidra_fallback` 配置运行 Ghidra fallback，并把 `ghidra_decompile` 路径回填到对应函数
 
 ## Hex-Rays 失败分类
 

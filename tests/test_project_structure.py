@@ -17,6 +17,7 @@ class TestProjectStructure(unittest.TestCase):
             "core.mapping.graph_mapper",
             "exporters.export_manager",
             "exporters.file_exporter",
+            "exporters.export_manifest",
             "database.ladybugdb_manager",
         ]
 
@@ -38,6 +39,7 @@ class TestProjectStructure(unittest.TestCase):
             "core/models.py",
             "exporters/__init__.py",
             "exporters/artifact_utils.py",
+            "exporters/export_manifest.py",
             "ida_graphy.py",
             "config.yaml.example",
             "pyproject.toml",

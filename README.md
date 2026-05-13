@@ -7,9 +7,9 @@
 ---
 
 ## 概述
-想要AI逆向二进制？请用ida-pro-mcp。
-你认同“终端命令即答案”？请用ida-no-mcp。
-你想读懂一个巨大的商业二进制模块吗？苦于代码量过大塞不进上下文，又不知道怎么让AI拥有全局视野？试试引入IDA-Graphy吧。
+* 想要AI逆向二进制？请用ida-pro-mcp。
+* 你认同“终端命令即答案”？请用ida-no-mcp。
+* 你想读懂一个巨大的商业二进制模块吗？苦于代码量过大塞不进上下文，又不知道怎么让AI拥有全局视野？试试引入IDA-Graphy吧。
 
 IDA-Graphy 是一个**双层**项目：
 
@@ -110,14 +110,14 @@ ida-graphy export <二进制文件路径>
 | `imports.txt` | 导入表 |
 | `exports.txt` | 导出表 |
 
-项目式分析会把导出文件同步建模为 `ExportArtifact` 节点，并通过 `HAS_ARTIFACT` 连接到 `Binary`、`Function` 或结构体根 `DataSlot`。AI 不需要猜测文件名，可以直接查询 `relative_path` 后读取对应 artifact。
+项目式分析不会把导出文件建成图节点。函数伪代码路径写入 `Function.decompiled_file`，结构体定义路径写入非 global `DataSlot.struct_file`。每个二进制目录还会生成 `exports/<binary>/_export_manifest.json`，其路径和 SHA-256 写入 `Binary.export_manifest_file` / `Binary.export_manifest_hash`，用于快速校验数据库路径与磁盘文件是否一致。
 
 示例查询：
 
 ```cypher
-MATCH (f:Function)-[:HAS_ARTIFACT]->(a:ExportArtifact)
+MATCH (f:Function)
 WHERE f.name = "target_function"
-RETURN f.name, a.artifact_type, a.relative_path, a.status;
+RETURN f.name, f.decompiled_file, f.pseudocode_hash;
 ```
 
 ### IDA-Graphy（项目式分析，写入图数据库）
@@ -134,6 +134,9 @@ ida-graphy project sync <项目名>
 
 # 查看状态
 ida-graphy project status <项目名>
+
+# 快速校验数据库路径、manifest 和导出文件
+ida-graphy project verify-exports <项目名>
 ```
 
 ### LadybugDB 管理
@@ -149,7 +152,7 @@ ida-graphy ladybugdb databases
 ida-graphy ladybugdb query <项目名> "MATCH (n) RETURN n LIMIT 5"
 
 # 以 JSON 输出结果
-ida-graphy ladybugdb query <项目名> "MATCH (n) RETURN n LIMIT 5" --output json
+ida-graphy ladybugdb query <项目名> "MATCH (n) RETURN n LIMIT 5" --output-format json
 ```
 
 ---
@@ -158,11 +161,10 @@ ida-graphy ladybugdb query <项目名> "MATCH (n) RETURN n LIMIT 5" --output jso
 
 | 节点 | 说明 |
 |------|------|
-| `:Binary` | 可执行文件容器，ID = `SHA256(文件内容)` |
+| `:Binary` | 可执行文件容器，ID = `SHA256(文件内容)`，记录 manifest 路径和哈希 |
 | `:Function` | 函数节点，区分 NORMAL / IMPORT / EXPORT / THUNK |
 | `:DataSlot` | 结构体成员或全局变量，结构体成员 ID 跨二进制共享 |
 | `:String` | 常量字符串，基于内容去重 |
-| `:ExportArtifact` | 导出文件索引，包含相对路径、内容 hash、状态和错误信息 |
 
 | 边 | 说明 |
 |----|------|
@@ -172,7 +174,6 @@ ida-graphy ladybugdb query <项目名> "MATCH (n) RETURN n LIMIT 5" --output jso
 | `READS` | 函数读取 DataSlot，含条件判断标记 |
 | `WRITES` | 函数写入 DataSlot，含操作类型与常量值 |
 | `REFERENCES` | 函数引用 String |
-| `HAS_ARTIFACT` | Binary / Function / DataSlot 指向导出文件 artifact |
 
 ### Hex-Rays 与 Ghidra fallback
 

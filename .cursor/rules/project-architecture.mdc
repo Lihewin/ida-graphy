@@ -34,6 +34,6 @@ IDA-Graphy 是双层二进制分析项目：
 
 开发约定：
 - 遵守现有模块边界，优先扩展 DTO -> mapper -> model -> exporter 的链路。
-- AI 读取导出文件时优先通过 `ExportArtifact.relative_path` 和 `HAS_ARTIFACT`，不要猜路径。
+- AI 读取导出文件时优先通过 `Function.decompiled_file`、`DataSlot.struct_file` 和 `_export_manifest.json`，不要猜路径。
 - 配置示例不得包含个人用户名或机器专属路径；Ghidra fallback 配置放在 `export.ghidra_fallback`。
 - 本地运行产物、样本和备份目录不要纳入代码改动。
